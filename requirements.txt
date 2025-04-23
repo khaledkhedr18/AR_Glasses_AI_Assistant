@@ -1,0 +1,26 @@
+# Core dependencies
+PyQt5==5.15.7
+vosk==0.3.45
+transformers==4.28.1
+sentencepiece==0.2.0
+
+# Computer Vision
+opencv-python==4.7.0.72
+pytesseract==0.3.10
+picamera2==0.3.6
+
+# Audio processing
+sounddevice==0.4.6
+python-Levenshtein==0.25.0  # For fuzzywuzzy optimization
+
+# Text processing
+fuzzywuzzy==0.18.0
+
+# Utilities
+numpy==1.26.4
+python-dateutil==2.8.2
+requests==2.31.0
+
+# Raspberry Pi specific (precompiled wheels)
+gpiozero==1.6.2
+RPi.GPIO==0.7.1
