@@ -1,11 +1,11 @@
 from PyQt5.QtCore import QObject
 from fuzzywuzzy import fuzz
-from Managers.IO_Handlers.Audio_Handler import AudioHandler
+from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
 
 
-class DL_Handler(QObject):
+class LTD_Handler(QObject):
     """
-    This class handles the default language model (LLM) operations.
+    This class handles the language and the tool detection
     """
     def __init__(self, audio_handler=None):
         """

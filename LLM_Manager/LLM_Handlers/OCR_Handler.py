@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import pytesseract
 from PyQt5.QtCore import QObject
-from Managers.IO_Handlers.Audio_Handler import AudioHandler
+from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
 
 class OCR_Handler(QObject):
     """

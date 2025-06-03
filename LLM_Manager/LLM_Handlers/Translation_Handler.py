@@ -1,8 +1,8 @@
 from transformers import MarianMTModel, MarianTokenizer, pipeline
 import threading
 from PyQt5.QtCore import QObject, QTimer
-from Managers.IO_Handlers.Audio_Handler import AudioHandler
-from Managers.Network.Network_Handler import Network_Handler
+from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
+from Network_Manager.Network_Handler import Network_Handler
 
 class Translation_Handler(QObject):
     """

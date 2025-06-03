@@ -1,0 +1,168 @@
+import os
+import importlib.util
+import sys
+
+class GUI_Handler:
+    """
+    Main handler for managing GUI interfaces.
+
+    This class serves as a factory and manager for different GUI implementations,
+    allowing the application to switch between different GUI frameworks (Qt or Tkinter)
+    while maintaining a consistent interface.
+    """
+
+    def __init__(self, gui_type="qt"):
+        """
+        Initialize the GUI Handler with the specified GUI type.
+
+        Args:
+            gui_type (str): The type of GUI to use - "qt" (default) or "tkinter"
+        """
+        self.gui_handler = None
+        self.gui_type = gui_type.lower()
+
+        # Load the appropriate GUI handler
+        self._load_gui_handler()
+
+    def _load_gui_handler(self):
+        """Load the appropriate GUI handler based on the selected type"""
+        # Get the current directory
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        if self.gui_type == "qt":
+            # Load Qt handler
+            module_path = os.path.join(base_dir, "QT_Handler", "Qt_Handler.py")
+            if os.path.exists(module_path):
+                spec = importlib.util.spec_from_file_location("Qt_Handler", module_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                # Create the Qt handler
+                self.gui_handler = module.Qt_Handler()
+                print("Qt GUI handler loaded successfully")
+            else:
+                print(f"Error: Qt handler module not found at {module_path}")
+                self._fallback_to_tkinter()
+
+        elif self.gui_type == "tkinter":
+            # Load Tkinter handler
+            module_path = os.path.join(base_dir, "Tkinter_Handler", "Tkinter_Handler.py")
+            if os.path.exists(module_path):
+                spec = importlib.util.spec_from_file_location("Tkinter_Handler", module_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                # Create the Tkinter handler
+                self.gui_handler = module.Tkinter_Handler()
+                print("Tkinter GUI handler loaded successfully")
+            else:
+                print(f"Error: Tkinter handler module not found at {module_path}")
+                self._fallback_to_qt()
+
+        else:
+            print(f"Unsupported GUI type: {self.gui_type}")
+            self._fallback_to_qt()
+
+    def _fallback_to_qt(self):
+        """Try to load Qt as a fallback"""
+        print("Falling back to Qt GUI")
+        self.gui_type = "qt"
+        self._load_gui_handler()
+
+    def _fallback_to_tkinter(self):
+        """Try to load Tkinter as a fallback if Qt fails"""
+        print("Falling back to Tkinter GUI")
+        self.gui_type = "tkinter"
+        self._load_gui_handler()
+
+    def create_window(self, title="AR Glasses Assistant", fullscreen=True):
+        """
+        Create the main application window
+
+        Args:
+            title (str): Window title
+            fullscreen (bool): Whether to show in fullscreen mode
+        """
+        if self.gui_handler:
+            return self.gui_handler.create_window(title, fullscreen)
+        return None
+
+    def update_status(self, status_text, is_online=None):
+        """
+        Update the status display
+
+        Args:
+            status_text (str): Status text to display
+            is_online (bool, optional): If provided, adds ONLINE/OFFLINE indicator
+        """
+        if self.gui_handler:
+            self.gui_handler.update_status(status_text, is_online)
+
+    def update_user_speech(self, text):
+        """
+        Update the user speech display
+
+        Args:
+            text (str): User speech text
+        """
+        if self.gui_handler:
+            self.gui_handler.update_user_speech(text)
+
+    def update_ai_response(self, text):
+        """
+        Update the AI response display
+
+        Args:
+            text (str): AI response text
+        """
+        if self.gui_handler:
+            self.gui_handler.update_ai_response(text)
+
+    def create_worker(self, task_func, *args):
+        """
+        Create a worker thread for background tasks
+
+        Args:
+            task_func: Function to run
+            *args: Arguments to pass to the function
+
+        Returns:
+            WorkerThread: The created worker thread (or equivalent in current GUI)
+        """
+        if self.gui_handler:
+            return self.gui_handler.create_worker(task_func, *args)
+        return None
+
+    def get_camera_widget(self):
+        """
+        Get the camera widget instance
+
+        Returns:
+            The camera widget from the active GUI handler
+        """
+        if self.gui_handler:
+            return self.gui_handler.get_camera_widget()
+        return None
+
+    def get_signals(self):
+        """
+        Get the communication signals object
+
+        Returns:
+            Communication signals object from the active GUI handler
+        """
+        if self.gui_handler:
+            if hasattr(self.gui_handler, 'signals'):
+                return self.gui_handler.signals
+        return None
+
+    def run(self):
+        """Run the application main loop"""
+        if self.gui_handler:
+            return self.gui_handler.run()
+        return 1  # Error code
+
+    def cleanup(self):
+        """Clean up resources before exit"""
+        if self.gui_handler:
+            self.gui_handler.cleanup()
