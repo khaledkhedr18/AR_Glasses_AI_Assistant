@@ -1,162 +1,87 @@
-````markdown
-# AR AI Assistant - Multimodal Translation System
+# Project Functionalities and LLM Interaction Flow
 
-**Real-time speech/image translation with hybrid cloud/edge processing**
+This document describes the project's core functionalities and how the `LLM_Manager` abstracts and encapsulates interactions with Large Language Models (LLMs) through specialized handlers.
 
-## 🌟 Features
+## 1. Project Overview
 
-- **Multimodal Input Support**
-  🗣️ Speech-to-Speech Translation • 📸 Image Text Extraction & Translation
-- **Hybrid Operation Modes**
-  🌐 Cloud-connected AI Processing • 📴 Local Edge Computing (Raspberry Pi Optimized)
-- **Multi-language Support**
-  English ↔ Arabic ↔ French • Expandable Language Framework
-- **Smart Interaction**
-  Voice Activation ("Hi David") • Context-Aware Processing • Adaptive UI Overlays
+This project provides a structured way to interact with various Large Language Models for different tasks. It uses a central manager (`LLM_Manager`) to create and provide access to specialized "handler" modules, each responsible for a specific functionality like audio transcription or other model-specific operations.
 
-## 🛠️ Technology Stack
+## 2. Core Components
 
-| Component        | Technologies Used                                   |
-| ---------------- | --------------------------------------------------- |
-| Core Framework   | Python 3.9, PyQt5, Socket Programming               |
-| AI/ML Engine     | Vosk (ASR), HuggingFace Transformers, Tesseract OCR |
-| Vision System    | OpenCV, Picamera2, Libcamera                        |
-| Audio Processing | Sounddevice, FLite TTS, PulseAudio                  |
-| Deployment       | Raspberry Pi OS, ARM-optimized Models               |
+### 2.1. Configuration
+*   **File:** [`configrations/config.py`](configrations/config.py)
+*   **Purpose:** Manages all application-level configurations, such as API keys, LLM API endpoints (e.g., `API_TRANSCRIBE_ENDPOINT`), file paths (e.g., `AUDIO_PATH`), and other settings.
 
-## 🚀 Installation
+### 2.2. LLM Manager (`LLM_Manager.py`)
+*   **File:** [`Managers/LLM_Manager.py`](Managers/LLM_Manager.py)
+*   **Role:** Acts as a **Registry and Factory** for LLM handlers.
+*   **Key Functionalities:**
+    *   **Handler Registration:**
+        *   The [`LLM_Manager.register_handler(purpose_key, handler_class, is_default=False)`](Managers/LLM_Manager.py:17) class method allows different handler classes (which must be subclasses of `LLM_Manager`) to be registered with a unique string identifier called `purpose_key`.
+        *   This creates a central registry mapping `purpose_key`s to their respective handler classes.
+        *   A default handler can also be specified.
+    *   **Handler Instantiation (Abstraction):**
+        *   The [`LLM_Manager.get_instance(purpose_key=None, *args, **kwargs)`](Managers/LLM_Manager.py:28) class method is used to obtain an instance of a specific handler.
+        *   Client code requests a handler by its `purpose_key` without needing to know the concrete class name of the handler. If no `purpose_key` is provided, the default handler is instantiated.
+        *   The `LLM_Manager` looks up the `purpose_key` and returns a new instance of the associated handler class, passing the `purpose_key` itself as a `purpose` argument to the handler's constructor.
 
-**System Requirements:**
+### 2.3. LLM Request Handlers
+*   **Directory:** [`Server_LLMS_Requests_Handlers/`](Server_LLMS_Requests_Handlers/)
+*   **Role:** Contains specialized modules, each inheriting from `LLM_Manager`, that encapsulate the logic for a specific LLM-related task.
+*   **Examples:**
+    *   **Audio Transcription Handler:**
+        *   **File:** [`Server_LLMS_Requests_Handlers/AudioTranscriptionRequestHandler.py`](Server_LLMS_Requests_Handlers/AudioTranscriptionRequestHandler.py)
+        *   **Inherits from:** `LLM_Manager`.
+        *   **Functionality Encapsulated:** Handles audio transcription. The [`send_audio_to_api(audio_path)`](Server_LLMS_Requests_Handlers/AudioTranscriptionRequestHandler.py:11) method contains the logic to take an audio file path, send it to a transcription API (defined in `config.py`), and process the response.
+    *   **GPM Request Handler:**
+        *   **File:** [`Server_LLMS_Requests_Handlers/GpmRequestHandler.py`](Server_LLMS_Requests_Handlers/GpmRequestHandler.py)
+        *   **Inherits from:** `LLM_Manager` (presumably, based on the pattern).
+        *   **Functionality Encapsulated:** Manages requests for a "GPM" model. It would contain methods specific to interacting with this model.
 
-- Raspberry Pi 4 (Recommended) or Linux PC
-- Camera Module (for image features)
-- Python 3.9+
+### 2.4. Utility/Testing
+*   **File:** [`try.py`](try.py) - Likely for testing and experimentation.
+*   **File:** [`recording.wav`](recording.wav) - Sample audio for testing transcription.
 
-```bash
-# Clone repository
-git clone https://github.com/khaledkhedr18/ar_glasses_ai_assistant.git
-cd ar_glasses_ai_assistant
+## 3. Abstraction and Encapsulation Flow
 
-# Install Python dependencies
-pip install -r requirements.txt
+The `LLM_Manager` plays a crucial role in abstracting the creation of handlers and allowing handlers to encapsulate their specific tasks:
 
-# Install system components
-sudo apt-get install -y \
-  flite \
-  tesseract-ocr \
-  tesseract-ocr-ara \
-  tesseract-ocr-fra \
-  libatlas-base-dev
-```
-````
+1.  **Initialization/Setup (e.g., in `try.py` or an application entry point):**
+    *   Different handler classes (e.g., `AudioTranscriptionRequestHandler`, `GpmRequestHandler`) are registered with the `LLM_Manager` using their unique `purpose_key`.
+    ```python
+    # Example of registration (likely done once at startup)
+    # from Managers.LLM_Manager import LLM_Manager
+    # from Server_LLMS_Requests_Handlers.AudioTranscriptionRequestHandler import AudioTranscriptionRequestHandler
+    # from Server_LLMS_Requests_Handlers.GpmRequestHandler import GpmRequestHandler
+    #
+    # LLM_Manager.register_handler("audio_transcribe", AudioTranscriptionRequestHandler, is_default=True)
+    # LLM_Manager.register_handler("gpm_process", GpmRequestHandler)
+    ```
 
-## ⚙️ Configuration
+2.  **Client Request for Functionality:**
+    *   When a part of the application needs a specific LLM functionality, it requests a handler instance from `LLM_Manager` using the `purpose_key`.
+    ```python
+    # Example: Getting an audio transcription handler
+    # audio_handler = LLM_Manager.get_instance("audio_transcribe", audio_path="path/to/specific_audio.wav")
+    #
+    # Example: Getting the default handler if "audio_transcribe" was default
+    # default_audio_handler = LLM_Manager.get_instance(audio_path="path/to/default_audio.wav")
+    ```
+    *   The `LLM_Manager` instantiates and returns the correct handler object (e.g., an `AudioTranscriptionRequestHandler` instance). The client code is decoupled from the concrete `AudioTranscriptionRequestHandler` class.
 
-**1. Model Setup:**
+3.  **Handler Executes Task:**
+    *   The client code then calls methods on the obtained handler instance to perform the task.
+    ```python
+    # if audio_handler:
+    #     transcription_result = audio_handler.send_audio_to_api()
+    #     # Process result
+    ```
+    *   The handler (e.g., `AudioTranscriptionRequestHandler`) uses its encapsulated logic and configurations (from `config.py`) to interact with the actual LLM service and return the result.
 
-```bash
-# Directory structure
-mkdir -p ~/Desktop/gradproj/
 
-# Download Vosk models to:
-# ~/Desktop/gradproj/
-# - vosk-model-ar-mgb2-0.4
-# - vosk-model-small-en-us-0.15
-# - vosk-model-small-fr-0.22
-```
 
-**2. Network Settings (functions.py):**
+## 4. How to Use (Conceptual)
 
-```python
-SERVER_IP = '192.168.1.65'  # Your translation server IP
-SERVER_PORT = 4040           # Match server configuration
-```
-
-## 🖥️ Usage
-
-**Launch Application:**
-
-```bash
-python main_gui.py
-```
-
-**Workflow:**
-
-1. Wake phrase: "Hi David"
-2. Choose input type (voice/image)
-3. Select source & target languages
-4. Provide input:
-   - 🎤 Speak naturally for voice translation
-   - 📷 Capture text-containing image
-5. Receive translated output via speech+display
-
-**Key Commands:**
-| Command | Action |
-|------------------|----------------------------|
-| "Take" | Capture image |
-| "Stop"/"Exit" | End session |
-| "Yes"/"No" | Confirm/cancel operations |
-
-## 📂 Project Structure
-
-```
-AR-AI-Assistant/
-├── functions.py          # Core logic (networking, processing)
-├── main_gui.py           # PyQt5 GUI entry point
-├── model_loader.py       # Model management system
-├── vosk-models/          # Speech recognition models
-├── server/               # Translation server (optional)
-└── requirements.txt      # Dependency specifications
-```
-
-## 📦 Dependencies
-
-**Python Packages:**
-
-```
-PyQt5==5.15.7
-vosk==0.3.45
-transformers==4.28.1
-opencv-python==4.7.0.72
-pytesseract==0.3.10
-sounddevice==0.4.6
-```
-
-**System Packages:**
-
-```
-flite tesseract-ocr libcamera-dev pulseaudio
-```
-
-## ⚠️ Important Notes
-
-- **Raspberry Pi Setup:**
-  Enable camera interface via `raspi-config`
-- **Performance:**
-  Minimum 2GB RAM recommended for offline use
-- **Security:**
-  All network data base64-encoded • No persistent storage of user data
-- **First Run:**
-  Allow 2-5 minutes for initial model loading
-
-## 🛣️ Roadmap
-
-- [ ] Expand to 10+ languages
-- [ ] Mobile companion app integration
-- [ ] Sign language recognition module
-- [ ] Advanced diarization for multi-speaker scenarios
-
-## 📜 License
-
-Apache 2.0 License | © 2023 [Khaled Khedr]
-
----
-
-**Contribution Guidelines:**
-
-1. Fork repository
-2. Create feature branch
-3. Submit PR with detailed documentation
-4. Follow PEP8 coding standards
-
-_For commercial use or custom implementations, contact author._
+1.  **Configure:** Ensure [`configrations/config.py`](configrations/config.py) has the correct API endpoints, keys, and paths.
+2.  **Register Handlers:** In your application's entry point or setup phase, register all available handler classes with the `LLM_Manager` using appropriate `purpose_key`s.
+3.  **Get Handler Instance:** When needed, use `LLM_Manager.get_instance("your_purpose_key", ...any_handler_specific_args...)` to get a handler.

@@ -1,8 +1,0 @@
-sudo apt-get install -y \
-  flite \
-  tesseract-ocr \
-  tesseract-ocr-ara \
-  tesseract-ocr-fra \
-  libcamera-dev \
-  libatlas-base-dev \
-  portaudio19-dev

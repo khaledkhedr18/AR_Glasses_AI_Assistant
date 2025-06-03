@@ -1,0 +1,5 @@
+API_BASE_URL = "http://127.0.0.1:8000/api/"
+API_CHAT_ENDPOINT = f"{API_BASE_URL}chat/"
+API_TRANSCRIBE_ENDPOINT = f"{API_BASE_URL}transcribe-audio/"
+IMAGE_PATH="captured_image.jpg"
+AUDIO_PATH = "recording.wav"
