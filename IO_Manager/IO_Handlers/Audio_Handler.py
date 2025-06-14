@@ -6,95 +6,50 @@ import time
 import json
 import threading
 from vosk import KaldiRecognizer
-
-class TTSThread(QThread):
-    finished = pyqtSignal()
-
-    def __init__(self, text):
-        """
-        Initialize a TTSThread with given text.
-
-        This constructor takes a text string as an argument and stores it
-        as an instance variable. The text is played as speech when the
-        thread is started.
-
-        :param text: The text to play as speech.
-        """
-        super().__init__()
-        self.text = text
-
-    def run(self):
-        """
-        Runs the thread to play the given text as speech.
-
-        This method is called automatically when the thread is started. It
-        runs the flite command to play the given text as speech and then
-        emits a finished signal.
-
-        :return: None
-        """
-        subprocess.run(["flite", self.text])
-        self.finished.emit()
+from utils.logging import Logger
+from utils.WorkerThread import create_worker
 
 class AudioHandler:
-    def __init__(self):
-        """
-        Initialize the AudioHandler.
+    """
+    Handles audio I/O operations including speech recognition and text-to-speech
+    in a framework-agnostic manner.
+    """
 
-        Sets up the internal list to track TTS threads and audio lock for recording.
-        """
-        self.tts_threads = []
+    def __init__(self):
+        """Initialize the AudioHandler."""
+        self.logger = Logger()
+        self.active_tasks = []
         self.audio_lock = threading.Lock()
         self.listening = False
 
-    def speak(self, text):
+    def start_recording(self, model, duration=10, on_result=None):
         """
-        Speak the given text using the flite text-to-speech engine.
-
-        Args:
-            text (str): The text to be spoken.
-
-        Returns:
-            None
-        """
-        clean_text = " ".join(str(text).splitlines()).strip()
-        clean_text = clean_text.replace('"', '').replace("'", "")
-        tts_thread = TTSThread(clean_text)
-
-        def cleanup():
-            self.remove_thread(tts_thread)
-
-        tts_thread.finished.connect(cleanup)
-        self.tts_threads.append(tts_thread)
-        tts_thread.start()
-
-    def remove_thread(self, thread):
-        """
-        Remove a thread from the internal tracking list.
-
-        Args:
-            thread: The thread to remove
-
-        Returns:
-            None
-        """
-        if thread in self.tts_threads:
-            self.tts_threads.remove(thread)
-
-    def get_audio(self, model, period=10):
-        """
-        Records audio from the default microphone and attempts to recognize spoken text.
+        Start recording audio for speech recognition.
 
         Args:
             model: The Vosk speech recognition model to use
-            period (int): Maximum recording time in seconds
+            duration (int): Maximum recording time in seconds
+            on_result: Callback for when speech is recognized
 
         Returns:
-            str: The recognized text, or empty string if no speech detected
-
-        Raises:
-            Exception: If audio device cannot be accessed or other errors occur
+            WorkerThread: The worker thread handling the recording
         """
+        def audio_task():
+            return self._record_audio(model, duration)
+
+        worker = create_worker(
+            audio_task,
+            on_result=on_result,
+            on_finished=lambda: self._remove_task(worker),
+            task_name="audio_recording"
+        )
+
+        self.active_tasks.append(worker)
+        worker.start()
+        return worker
+
+    def _record_audio(self, model, period=10):
+        """Records audio and attempts to recognize spoken text."""
         with self.audio_lock:
             try:
                 self.listening = True
@@ -105,7 +60,7 @@ class AudioHandler:
                 def callback(indata, frames, time, status):
                     nonlocal recognized_text
                     if status:
-                        print(f"Audio input error: {status}")
+                        self.logger.warning(f"Audio input error: {status}")
 
                     # Process audio data
                     if recognizer.AcceptWaveform(indata.tobytes()):
@@ -113,9 +68,9 @@ class AudioHandler:
                         text = result.get("text", "")
                         if text.strip():  # Only update if we got non-empty text
                             recognized_text = text
-                            print(f"You said: {recognized_text}")
+                            self.logger.info(f"Speech recognized: {recognized_text}")
 
-                print("Listening...")
+                self.logger.info("Listening for speech...")
                 with sd.InputStream(callback=callback, channels=1, samplerate=16000,
                                     dtype=np.int16, blocksize=8000):
                     # Wait until we either get text or timeout
@@ -134,29 +89,94 @@ class AudioHandler:
                 return recognized_text
 
             except Exception as e:
-                print(f"Error recording audio: {e}")
+                self.logger.error(f"Error recording audio: {e}")
                 return ""
             finally:
                 self.listening = False
                 if 'recognizer' in locals():
                     recognizer.Reset()
 
-    def is_listening(self):
+    def stop_recording(self):
+        """Stop any ongoing recording sessions."""
+        if self.listening:
+            for task in list(self.active_tasks):
+                if task.task_name == "audio_recording":
+                    task.stop()
+            self.listening = False
+            return True
+        return False
+
+    def output_speech(self, text, on_finished=None):
         """
-        Check if the handler is currently listening for audio input.
+        Convert text to speech and play it through the system's audio output.
+
+        Args:
+            text (str): The text to be spoken
+            on_finished: Optional callback when speech completes
 
         Returns:
-            bool: True if currently listening, False otherwise
+            WorkerThread: The worker thread handling the TTS
         """
+        def speak_task():
+            clean_text = " ".join(str(text).splitlines()).strip()
+            clean_text = clean_text.replace('"', '').replace("'", "")
+            subprocess.run(["flite", clean_text])
+            return True
+
+        worker = create_worker(
+            speak_task,
+            on_finished=lambda: self._handle_speech_finished(worker, on_finished),
+            task_name="text_to_speech"
+        )
+
+        self.active_tasks.append(worker)
+        worker.start()
+        return worker
+
+    def _handle_speech_finished(self, worker, callback=None):
+        """Handle completion of a speech task"""
+        self._remove_task(worker)
+        if callback:
+            callback()
+
+    def _remove_task(self, task):
+        """Remove a task from the active tasks list"""
+        if task in self.active_tasks:
+            self.active_tasks.remove(task)
+
+    def mute_speech(self):
+        """Stop any ongoing speech output."""
+        stopped_count = 0
+        for task in list(self.active_tasks):
+            if task.task_name == "text_to_speech":
+                task.stop()
+                # Additionally kill any running flite processes
+                try:
+                    subprocess.run(["pkill", "-f", "flite"], stderr=subprocess.DEVNULL)
+                    stopped_count += 1
+                except Exception as e:
+                    self.logger.error(f"Error stopping speech: {e}")
+
+        return stopped_count
+
+    def is_listening(self):
+        """Check if the handler is currently listening for audio input."""
         return self.listening
 
-    def cleanup(self):
-        """
-        Clean up resources used by the AudioHandler.
+    def get_user_audio(self, model, duration=10):
+        """Synchronously record and recognize user speech."""
+        return self._record_audio(model, duration)
 
-        Waits for all TTS threads to complete before returning.
-        """
-        # Wait for all threads to complete
-        for thread in list(self.tts_threads):
-            if thread.isRunning():
-                thread.wait(1000)  # Wait up to 1 second
+    def cleanup(self):
+        """Clean up resources used by the AudioHandler."""
+        # Stop all active tasks
+        for task in list(self.active_tasks):
+            task.stop()
+
+        # Kill any lingering flite processes
+        try:
+            subprocess.run(["pkill", "-f", "flite"], stderr=subprocess.DEVNULL)
+        except:
+            pass
+
+        self.active_tasks.clear()

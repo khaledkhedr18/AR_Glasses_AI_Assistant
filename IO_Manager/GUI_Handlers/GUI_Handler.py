@@ -118,20 +118,34 @@ class GUI_Handler:
         if self.gui_handler:
             self.gui_handler.update_ai_response(text)
 
-    def create_worker(self, task_func, *args):
+    def create_worker(self, task_func, *args, on_result=None, on_finished=None):
         """
         Create a worker thread for background tasks
 
         Args:
             task_func: Function to run
             *args: Arguments to pass to the function
+            on_result: Callback for when task produces a result
+            on_finished: Callback for when task completes
 
         Returns:
-            WorkerThread: The created worker thread (or equivalent in current GUI)
+            A worker thread instance appropriate for the current GUI framework
         """
-        if self.gui_handler:
-            return self.gui_handler.create_worker(task_func, *args)
-        return None
+        from utils.WorkerThread import create_worker
+
+        # Use the appropriate worker type based on the GUI framework
+        worker_type = "thread"
+        if self.gui_type == "qt":
+            worker_type = "qt"
+
+        worker = create_worker(
+            task_func,
+            *args,
+            on_result=on_result,
+            on_finished=on_finished,
+            worker_type=worker_type
+        )
+        return worker
 
     def get_camera_widget(self):
         """
