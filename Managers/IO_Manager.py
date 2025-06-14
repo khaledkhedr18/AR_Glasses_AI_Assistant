@@ -1,6 +1,7 @@
 from Handlers.GUI_Handler import GUIHandler
 from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
+from vosk import Model, KaldiRecognizer
 import threading
 
 class IOManager:
@@ -168,4 +169,30 @@ class IOManager:
 
     def display_text(self, text):
         # Updates GUI with text
-        self.gui.display_text_in_window(text)
+        self.gui.display_text_in_window("ai window", text)
+
+    def get_audio(model, period=10):
+        """
+        Records audio from the default microphone and attempts to recognize spoken text.
+        Returns the recognized text, or None if no audio is detected.
+        """
+        with audio_lock:
+            recognizer = KaldiRecognizer(model, 16000)
+            recognized_text = ""
+            start_time = time.time()
+
+            def callback(indata, frames, time, status):
+                nonlocal recognized_text
+                if recognizer.AcceptWaveform(indata.tobytes()):
+                    result = json.loads(recognizer.Result())
+                    recognized_text = result.get("text", "")
+                    print(f"You said: {recognized_text}")
+
+            print("Listening...")
+            with sd.InputStream(callback=callback, channels=1, samplerate=16000, dtype=np.int16):
+                while (time.time() - start_time) < period:
+                    if recognized_text:
+                        return recognized_text
+                    sd.sleep(100)
+            recognizer.Reset()
+            return recognized_text

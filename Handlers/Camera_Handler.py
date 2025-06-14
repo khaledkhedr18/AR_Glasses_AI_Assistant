@@ -6,13 +6,12 @@ import numpy as np
 
 
 class CameraWidget:
-    def __init__(self, parent=None):
+    def __init__(self):
         """
         Initialize the CameraWidget.
 
         :param parent: Parent QWidget.
         """
-
         self.picam2 = None
         self.camera_lock = threading.Lock()
         self.capture_width = 1920
@@ -44,7 +43,7 @@ class CameraWidget:
                 print(f"Error capturing image: {e}")
                 return None
 
-    def initialize_camera(self):
+    def __initialize_camera(self):
         """
         Initialize the camera with native sensor resolution and proper color format.
 
