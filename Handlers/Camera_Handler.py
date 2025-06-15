@@ -4,7 +4,7 @@ from picamera2 import Picamera2
 import libcamera
 import os
 
-class CameraWidget:
+class CameraHandler:
     def __init__(self):
         """
         Initialize the Camera
