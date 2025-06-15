@@ -7,7 +7,7 @@ import os
 class CameraWidget:
     def __init__(self):
         """
-        Initialize the CameraWidget.
+        Initialize the Camera
         """
         self.frame_buffer = None
         self.picam2 = None
