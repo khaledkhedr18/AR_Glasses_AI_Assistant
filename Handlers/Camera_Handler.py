@@ -8,8 +8,6 @@ class CameraWidget:
     def __init__(self):
         """
         Initialize the CameraWidget.
-
-        :param parent: Parent QWidget.
         """
         self.frame_buffer = None
         self.picam2 = None
