@@ -16,7 +16,7 @@ class CameraWidget:
         self.capture_width = 1920
         self.capture_height = 1080
         self.quality = 90
-        self.save_dir = "Saved_Images"
+        self.save_dir = r"Saved_Images"
         self.image_save_path = None
         self.__initialize_camera()
 

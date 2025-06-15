@@ -3,6 +3,9 @@ from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
 from vosk import Model, KaldiRecognizer
 import threading
+import time
+import wave
+import json
 
 class IOManager:
     def __init__(self):
@@ -12,7 +15,7 @@ class IOManager:
         self.camera_running = False
         self.image = None
         self.audio_running = False
-        self.recorded_audio = None
+        self.recorded_audio_path = None
         self.camera_lock = threading.Lock()
         self.audio_lock = threading.Lock()
 
@@ -20,13 +23,13 @@ class IOManager:
         with self.camera_lock:
             if not self.camera_running:
                 self.image = self.camera.capture_image()
-                self.gui.display_image_in_window(self.image)
+                self.gui.display_image_in_window("camera window", self.image)
                 self.camera_running = True
 
     def stop_camera_stream(self):
         with self.camera_lock:
             if self.camera_running:
-                self.gui.hide_window()
+                self.gui.hide_window("camera window")
                 self.camera_running = False
 
     def get_frame(self):
@@ -44,13 +47,13 @@ class IOManager:
     def stop_audio_listening(self):
         with self.audio_lock:
             if self.audio_running:
-                self.recorded_audio = self.audio.stop_recording()
+                self.recorded_audio_path = self.audio.stop_recording()
                 self.audio_running = False
 
     def get_user_audio(self):
         with self.audio_lock:
             if self.audio_running:
-                return self.recorded_audio
+                return self.recorded_audio_path
             return None
 
     def get_user_config(self):
@@ -58,6 +61,7 @@ class IOManager:
         Interactive configuration through voice conversation with AI agent
         Returns: dict with source_lang, dest_lang, and translation_mode
         """
+
         config = {
             'source_lang': None,
             'dest_lang': None,
@@ -73,49 +77,89 @@ class IOManager:
             'german': 'de'
         }
 
+        def recognize_speech(audio_file_path):
+            """
+            Convert audio file to text using Vosk's KaldiRecognizer
+            Args:
+                audio_file_path (str): Path to the audio file
+            Returns:
+                str: Recognized text or None if recognition fails
+            """
+
+            try:
+                # Initialize Vosk model (ensure you have the model downloaded)
+                model = Model(model_path=r"/home/pi/Desktop/gradproj/vosk-model-small-en-us-0.15")
+
+                # Open the audio file
+                wf = wave.open(audio_file_path, "rb")
+
+                # Create recognizer instance
+                recognizer = KaldiRecognizer(model, wf.getframerate())
+
+                # Process audio file
+                text = ""
+                while True:
+                    data = wf.readframes(4000)
+                    if len(data) == 0:
+                        break
+                    if recognizer.AcceptWaveform(data):
+                        result = json.loads(recognizer.Result())
+                        text += result.get("text", "") + " "
+
+                # Get final result
+                final_result = json.loads(recognizer.FinalResult())
+                text += final_result.get("text", "")
+
+                # Clean up
+                wf.close()
+
+                text = text.strip().lower()
+                print(f"Recognized text: {text}")
+                return text if text else None
+
+            except Exception as e:
+                print(f"Error processing audio file: {e}")
+                return None
+
         def wait_for_wake_word():
+            print("Waiting for wake word 'hi david'...")
             while True:
-                with self.audio_lock:
-                    self.audio.start_recording()
-                    audio_data = self.audio.stop_recording()
-                    text = self.audio.get_vosk_recognition(audio_data)
-                    if text and 'hi david' in text.lower():
-                        return True
+                text = recognize_speech()
+                if text and 'hi david' in text:
+                    return True
+                time.sleep(0.1)
 
         def get_language_input(prompt):
+            print(prompt)
             self.gui.display_text_in_window(prompt)
             while True:
-                with self.audio_lock:
-                    self.audio.start_recording()
-                    audio_data = self.audio.stop_recording()
-                    text = self.audio.get_vosk_recognition(audio_data)
-                    if text:
-                        text = text.lower()
-                        for lang in lang_map:
-                            if lang in text:
-                                return lang_map[lang]
-            return None
+                text = recognize_speech()
+                if text:
+                    for lang in lang_map:
+                        if lang in text:
+                            return lang_map[lang]
+                time.sleep(0.1)
 
         def get_translation_mode():
             prompt = "What do you want to translate? (image, speech, or image with speech)"
+            print(prompt)
             self.gui.display_text_in_window(prompt)
             while True:
-                with self.audio_lock:
-                    self.audio.start_recording()
-                    audio_data = self.audio.stop_recording()
-                    text = self.audio.get_vosk_recognition(audio_data)
-                    if text:
-                        text = text.lower()
-                        if 'image' in text and 'speech' in text:
-                            return 'both'
-                        elif 'image' in text:
-                            return 'image'
-                        elif 'speech' in text:
-                            return 'speech'
-            return None
+                text = recognize_speech()
+                if text:
+                    if 'image' in text and 'speech' in text:
+                        return 'both'
+                    elif 'image' in text:
+                        return 'image'
+                    elif 'speech' in text:
+                        return 'speech'
+                time.sleep(0.1)
 
         # Start conversation flow
         if wait_for_wake_word():
+            print("Wake word detected! Starting configuration...")
+            self.gui.display_text_in_window("Wake word detected! Starting configuration...")
+
             # Get source language
             config['source_lang'] = get_language_input("What is the source language?")
 
@@ -126,8 +170,9 @@ class IOManager:
             config['translation_mode'] = get_translation_mode()
 
             # Display final configuration
-            self.gui.display_text_in_window(
-                f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}")
+            final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
+            print(final_config)
+            self.gui.display_text_in_window(final_config)
 
             return config if all(config.values()) else None
 
@@ -196,3 +241,4 @@ class IOManager:
                     sd.sleep(100)
             recognizer.Reset()
             return recognized_text
+
