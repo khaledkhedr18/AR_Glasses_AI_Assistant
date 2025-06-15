@@ -13,7 +13,8 @@ class IOManager:
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.camera_running = False
-        self.image = None
+        self.captured_image = None
+        self.frame = None
         self.audio_running = False
         self.recorded_audio = None
         self.wake_word = "hi david"
@@ -23,8 +24,8 @@ class IOManager:
     def start_camera_stream(self):
         with self.camera_lock:
             if not self.camera_running:
-                self.image = self.camera.capture_image()
-                self.gui.display_image_in_window("camera window", self.image)
+                self.frame = self.camera.capture_frame()
+                self.gui.display_image_in_window("camera window", self.frame)
                 self.camera_running = True
 
     def stop_camera_stream(self):
@@ -33,7 +34,7 @@ class IOManager:
                 self.gui.hide_window("camera window")
                 self.camera_running = False
 
-    def get_frame(self):
+    def get_image(self):
         with self.camera_lock:
             if self.camera_running:
                 return self.camera.capture_image()
@@ -57,7 +58,7 @@ class IOManager:
                 return self.recorded_audio
             return None
 
-    def record_with_timer(self, timeout_seconds):
+    def __record_with_timer(self, timeout_seconds):
         """
         Starts recording and sets a timer to stop after timeout_seconds
         Args:
@@ -65,25 +66,29 @@ class IOManager:
         Returns:
             str: Path to the recorded audio file
         """
-        recorded_event = threading.Event()
-        recorded_audio = [None]  # Using list as a mutable container
+        with self.audio_lock:
+            if not self.audio_running:
+                self.audio_running = True
+                recorded_event = threading.Event()
+                recorded_audio = [None]  # Using list as a mutable container
 
-        def stop_recording_timer():
-            recorded_audio[0] = self.audio.stop_recording()
-            recorded_event.set()
+                def stop_recording_timer():
+                    recorded_audio[0] = self.audio.stop_recording()
+                    recorded_event.set()
 
-        self.audio.start_recording()
-        timer = threading.Timer(timeout_seconds, stop_recording_timer)
-        timer.start()
+                self.audio.start_recording()
+                timer = threading.Timer(timeout_seconds, stop_recording_timer)
+                timer.start()
 
-        # Wait for recording to complete
-        recorded_event.wait(timeout=timeout_seconds + 1)  # Add 1 second buffer
+                # Wait for recording to complete
+                recorded_event.wait(timeout=timeout_seconds + 1)  # Add 1 second buffer
 
-        # Cancel timer if it hasn't fired yet
-        if timer.is_alive():
-            timer.cancel()
+                # Cancel timer if it hasn't fired yet
+                if timer.is_alive():
+                    timer.cancel()
 
-        return recorded_audio[0]
+                self.audio_running = False
+                return recorded_audio[0]
 
     def get_user_config(self):
         """
@@ -151,7 +156,7 @@ class IOManager:
                 return None
 
         def wait_for_wake_word():
-            self.recorded_audio = self.record_with_timer(10)
+            self.recorded_audio = self.__record_with_timer(10)
             print(f"Waiting for wake word {self.wake_word}...")
             self.gui.display_text_in_window("ai window", f"Waiting for wake word {self.wake_word}...")
             while True:
@@ -161,7 +166,7 @@ class IOManager:
                 time.sleep(0.1)
 
         def get_language_input(prompt):
-            self.recorded_audio = self.record_with_timer(10)
+            self.recorded_audio = self.__record_with_timer(10)
             print(prompt)
             self.gui.display_text_in_window(prompt)
             while True:
@@ -173,7 +178,7 @@ class IOManager:
                 time.sleep(0.1)
 
         def get_translation_mode():
-            self.recorded_audio = self.record_with_timer(10)
+            self.recorded_audio = self.__record_with_timer(10)
             prompt = "What do you want to translate? (speech, image, or image with prompt)"
             print(prompt)
             self.gui.display_text_in_window(prompt)
@@ -213,41 +218,46 @@ class IOManager:
 
     def get_user_command(self):
         """
-        Determines the command from user input through GUI or voice
+        Records audio and determines the command from user's voice input
         Returns: str - The command to execute ('start', 'stop', 'translate', 'exit')
         """
-        command = None
+        # Command keywords mapping
+        command_mapping = {
+            'start': ['start', 'begin', 'launch', 'activate', 'open'],
+            'stop': ['stop', 'end', 'finish', 'quit'],
+            'translate': ['translate', 'convert', 'change', 'interpret'],
+            'exit': ['exit', 'quit', 'close', 'leave']
+        }
 
-        # First check GUI command
-        gui_command = self.gui.get_command()
-        if gui_command:
-            return gui_command
+        try:
+            # Record audio for 5 seconds
+            self.recorded_audio = self.__record_with_timer(5)
+            if not self.recorded_audio:
+                return None
 
-        # If no GUI command, check voice command
-        with self.audio_lock:
-            if self.recorded_audio:
-                audio_text = self.audio.convert_speech_to_text(self.recorded_audio)
-                audio_text = audio_text.lower()
+            # Convert speech to text
+            text = self.recognize_speech(self.recorded_audio)
+            if not text:
+                return None
 
-                # Map keywords to commands
-                command_mapping = {
-                    'start': ['start', 'begin', 'launch'],
-                    'stop': ['stop', 'end', 'finish'],
-                    'translate': ['translate', 'convert', 'change'],
-                    'exit': ['exit', 'quit', 'close']
-                }
+            # Convert to lowercase for better matching
+            text = text.lower()
+            print(f"Recognized command: {text}")
 
-                # Check for command keywords
-                for cmd, keywords in command_mapping.items():
-                    if any(keyword in audio_text for keyword in keywords):
-                        command = cmd
-                        break
+            # Check for command keywords
+            for command, keywords in command_mapping.items():
+                if any(keyword in text for keyword in keywords):
+                    return command
 
-        return command
+            return None
 
-    def display_text(self, text):
+        except Exception as e:
+            print(f"Error processing command: {e}")
+            return None
+
+    def display_text(self, label, text):
         # Updates GUI with text
-        self.gui.display_text_in_window("ai window", text)
+        self.gui.display_text_in_window(label, text)
 
 
 

@@ -11,6 +11,7 @@ class CameraWidget:
 
         :param parent: Parent QWidget.
         """
+        self.frame_buffer = None
         self.picam2 = None
         self.camera_lock = threading.Lock()
         self.capture_width = 1920
@@ -44,6 +45,59 @@ class CameraWidget:
             except Exception as e:
                 print(f"Error capturing image: {e}")
                 return None
+
+    def capture_frame(self):
+        """Capture a single frame from the camera."""
+        with self.camera_lock:
+            try:
+                if self.picam2:
+                    frame = self.picam2.capture_array("main")
+                    self.frame_buffer = frame  # Store latest frame
+                    return frame
+                return None
+            except Exception as e:
+                print(f"Error capturing frame: {str(e)}")
+                return None
+
+    def set_camera_configurations(self, exposure=None, gain=None, focus_mode=None):
+        """
+        set camera configurations like exposure, gain and focus mode.
+
+        Args:
+            exposure (int, optional): Exposure time in microseconds
+            gain (float, optional): Analog gain value
+            focus_mode (str, optional): Focus mode (auto, continuous, manual)
+
+        Returns:
+            bool: True if parameters were set successfully, False otherwise
+        """
+        if not self.picam2:
+            return False
+
+        try:
+            controls = {}
+
+            if exposure is not None:
+                controls["ExposureTime"] = exposure
+
+            if gain is not None:
+                controls["AnalogueGain"] = gain
+
+            if focus_mode is not None:
+                if focus_mode.lower() == "auto":
+                    controls["AfMode"] = libcamera.controls.AfModeEnum.Auto
+                elif focus_mode.lower() == "continuous":
+                    controls["AfMode"] = libcamera.controls.AfModeEnum.Continuous
+                elif focus_mode.lower() == "manual":
+                    controls["AfMode"] = libcamera.controls.AfModeEnum.Manual
+
+            if controls:
+                self.picam2.set_controls(controls)
+            return True
+
+        except Exception as e:
+            print(f"Error setting camera parameters: {str(e)}")
+            return False
 
     def __initialize_camera(self):
         """
