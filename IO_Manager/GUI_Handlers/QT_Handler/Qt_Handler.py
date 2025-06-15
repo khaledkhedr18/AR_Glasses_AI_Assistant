@@ -29,53 +29,6 @@ class CommunicationSignals(QObject):
     error_occurred = pyqtSignal(str)
 
 
-class AudioVisualizer(QWidget):
-    """Widget for visualizing audio levels"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumHeight(30)
-        self.level = 0
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.decrease_level)
-        self.timer.start(50)  # Update every 50ms
-        self.logger = Logger()
-        self.logger.debug("AudioVisualizer initialized")
-
-    def set_level(self, level):
-        """Set the current audio level (0-100)"""
-        self.level = min(max(level, 0), 100)
-        self.update()
-
-    def decrease_level(self):
-        """Gradually decrease the level for visual effect"""
-        if self.level > 0:
-            self.level = max(0, self.level - 3)
-            self.update()
-
-    def paintEvent(self, event):
-        """Draw the audio level visualization"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # Draw background
-        painter.fillRect(self.rect(), QColor(40, 40, 40))
-
-        # Draw level bar
-        if self.level > 0:
-            bar_width = int(self.width() * (self.level / 100))
-
-            # Choose color based on level
-            if self.level < 30:
-                color = QColor(0, 200, 0)  # Green for low levels
-            elif self.level < 70:
-                color = QColor(200, 200, 0)  # Yellow for medium levels
-            else:
-                color = QColor(200, 0, 0)  # Red for high levels
-
-            painter.fillRect(0, 0, bar_width, self.height(), color)
-
 class Qt_Handler:
     """
     Handles all Qt GUI-related functionality.
@@ -96,7 +49,6 @@ class Qt_Handler:
             self.app = QApplication([]) if not QApplication.instance() else QApplication.instance()
             self.main_window = None
             self.camera_widget = None
-            self.audio_visualizer = None
             self.signals = CommunicationSignals()
             self.worker_threads = []
             self.is_fullscreen = False
@@ -222,10 +174,6 @@ class Qt_Handler:
             self.ai_response_label.setText("Assistant: Ready")
             self.ai_response_label.raise_()
 
-            # Audio visualizer
-            self.audio_visualizer = AudioVisualizer(self.main_window)
-            self.audio_visualizer.setGeometry(20, 480, 760, 30)
-            self.audio_visualizer.raise_()
 
             # Connect signals
             self.signals.update_ai_speech.connect(self.update_ai_response)
@@ -290,10 +238,8 @@ class Qt_Handler:
             self.user_speech_label.setText(f"You: {text}")
 
             # Simulate audio level based on text length
-            if hasattr(self, 'audio_visualizer') and self.audio_visualizer:
                 # Generate a level proportional to the string length (for demo)
-                level = min(len(text) * 5, 100)
-                self.audio_visualizer.set_level(level)
+            level = min(len(text) * 5, 100)
         except Exception as e:
             self.logger.error(f"Failed to update user speech: {str(e)}")
 
@@ -392,11 +338,6 @@ class Qt_Handler:
             if hasattr(self, 'ai_response_label'):
                 self.ai_response_label.move(20, height - self.ai_response_label.height() - 20)
 
-            # Audio visualizer at bottom
-            if hasattr(self, 'audio_visualizer') and self.audio_visualizer:
-                self.audio_visualizer.setGeometry(
-                    20, height - 50, width - 40, 30
-                )
 
             # Log performance for UI adjustment
             duration = time.time() - start_time
