@@ -1,14 +1,7 @@
-import sys
-import cv2
-import numpy as np
-import threading
 import time
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QEventLoop
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QWidget, QSizePolicy,
-                            QPushButton, QVBoxLayout, QHBoxLayout, QFrame)
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QFont, QColor
-
-from IO_Manager.IO_Handlers.Camera_Handler import CameraWidget
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QWidget, QVBoxLayout)
+from IO_Manager.GUI_Handlers.QT_Handler.QtCameraWidget import QtCameraWidget
 from utils.logging import Logger
 from utils.WorkerThread import WorkerThread
 
@@ -85,9 +78,9 @@ class Qt_Handler:
             self.main_window.setCentralWidget(central_widget)
             main_layout = QVBoxLayout(central_widget)
 
-            # Create camera widget using the imported CameraWidget class
+            # Create camera widget using QtCameraWidget
             self.logger.debug("Initializing camera widget")
-            self.camera_widget = CameraWidget()
+            self.camera_widget = QtCameraWidget()
             main_layout.addWidget(self.camera_widget)
 
             # Add standard overlay widgets
@@ -174,7 +167,6 @@ class Qt_Handler:
             self.ai_response_label.setText("Assistant: Ready")
             self.ai_response_label.raise_()
 
-
             # Connect signals
             self.signals.update_ai_speech.connect(self.update_ai_response)
             self.signals.update_user_speech.connect(self.update_user_speech)
@@ -237,8 +229,6 @@ class Qt_Handler:
         try:
             self.user_speech_label.setText(f"You: {text}")
 
-            # Simulate audio level based on text length
-                # Generate a level proportional to the string length (for demo)
             level = min(len(text) * 5, 100)
         except Exception as e:
             self.logger.error(f"Failed to update user speech: {str(e)}")
