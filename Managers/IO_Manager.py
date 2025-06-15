@@ -57,6 +57,34 @@ class IOManager:
                 return self.recorded_audio
             return None
 
+    def record_with_timer(self, timeout_seconds):
+        """
+        Starts recording and sets a timer to stop after timeout_seconds
+        Args:
+            timeout_seconds (int): Seconds to record
+        Returns:
+            str: Path to the recorded audio file
+        """
+        recorded_event = threading.Event()
+        recorded_audio = [None]  # Using list as a mutable container
+
+        def stop_recording_timer():
+            recorded_audio[0] = self.audio.stop_recording()
+            recorded_event.set()
+
+        self.audio.start_recording()
+        timer = threading.Timer(timeout_seconds, stop_recording_timer)
+        timer.start()
+
+        # Wait for recording to complete
+        recorded_event.wait(timeout=timeout_seconds + 1)  # Add 1 second buffer
+
+        # Cancel timer if it hasn't fired yet
+        if timer.is_alive():
+            timer.cancel()
+
+        return recorded_audio[0]
+
     def get_user_config(self):
         """
         Interactive configuration through voice conversation with AI agent
@@ -89,7 +117,7 @@ class IOManager:
 
             try:
                 # Initialize Vosk model (ensure you have the model downloaded)
-                model = Model(model_path=r"/home/pi/Desktop/gradproj/vosk-model-small-en-us-0.15")
+                model = Model(model_path = r"/home/pi/Desktop/gradproj/vosk-model-small-en-us-0.15")
 
                 # Open the audio file
                 wf = wave.open(audio_file, "rb")
@@ -123,13 +151,9 @@ class IOManager:
                 return None
 
         def wait_for_wake_word():
-
-            self.audio.start_recording()
-
+            self.recorded_audio = self.record_with_timer(10)
             print(f"Waiting for wake word {self.wake_word}...")
             self.gui.display_text_in_window("ai window", f"Waiting for wake word {self.wake_word}...")
-
-            self.recorded_audio = self.audio.stop_recording()
             while True:
                 text = recognize_speech(self.recorded_audio)
                 if text and self.wake_word in text:
@@ -137,12 +161,9 @@ class IOManager:
                 time.sleep(0.1)
 
         def get_language_input(prompt):
-            self.audio.start_recording()
-
+            self.recorded_audio = self.record_with_timer(10)
             print(prompt)
             self.gui.display_text_in_window(prompt)
-
-            self.recorded_audio = self.audio.stop_recording()
             while True:
                 text = recognize_speech(self.recorded_audio)
                 if text:
@@ -152,15 +173,12 @@ class IOManager:
                 time.sleep(0.1)
 
         def get_translation_mode():
-            self.audio.start_recording()
-
-            prompt = "What do you want to translate? (image, speech, or image with speech)"
+            self.recorded_audio = self.record_with_timer(10)
+            prompt = "What do you want to translate? (speech, image, or image with prompt)"
             print(prompt)
             self.gui.display_text_in_window(prompt)
-
-            self.recorded_audio = self.audio.stop_recording()
             while True:
-                text = recognize_speech()
+                text = recognize_speech(self.recorded_audio)
                 if text:
                     if 'image' in text and 'speech' in text:
                         return 'both'
@@ -231,29 +249,5 @@ class IOManager:
         # Updates GUI with text
         self.gui.display_text_in_window("ai window", text)
 
-    def get_audio(model, period=10):
-        """
-        Records audio from the default microphone and attempts to recognize spoken text.
-        Returns the recognized text, or None if no audio is detected.
-        """
-        with audio_lock:
-            recognizer = KaldiRecognizer(model, 16000)
-            recognized_text = ""
-            start_time = time.time()
 
-            def callback(indata, frames, time, status):
-                nonlocal recognized_text
-                if recognizer.AcceptWaveform(indata.tobytes()):
-                    result = json.loads(recognizer.Result())
-                    recognized_text = result.get("text", "")
-                    print(f"You said: {recognized_text}")
-
-            print("Listening...")
-            with sd.InputStream(callback=callback, channels=1, samplerate=16000, dtype=np.int16):
-                while (time.time() - start_time) < period:
-                    if recognized_text:
-                        return recognized_text
-                    sd.sleep(100)
-            recognizer.Reset()
-            return recognized_text
 
