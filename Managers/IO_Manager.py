@@ -112,9 +112,11 @@ class IOManager:
         }
 
         def wait_for_wake_word():
+            prompt = f"Please say the wake word '{self.wake_word}' to start configuration."
+            self.audio.output_speech(prompt)
+            print(prompt)
+            self.gui.display_text_in_window("ai window", prompt)
             self.recorded_audio = self.__record_with_timer(10)
-            print(f"Waiting for wake word {self.wake_word}...")
-            self.gui.display_text_in_window("ai window", f"Waiting for wake word {self.wake_word}...")
             while True:
                 text = self.__recognize_speech(self.recorded_audio)
                 if text and self.wake_word in text:
@@ -122,9 +124,10 @@ class IOManager:
                 time.sleep(0.1)
 
         def get_language_input(prompt):
-            self.recorded_audio = self.__record_with_timer(10)
+            self.audio.output_speech(prompt)
             print(prompt)
             self.gui.display_text_in_window(prompt)
+            self.recorded_audio = self.__record_with_timer(10)
             while True:
                 text = self.__recognize_speech(self.recorded_audio)
                 if text:
@@ -134,10 +137,11 @@ class IOManager:
                 time.sleep(0.1)
 
         def get_translation_mode():
-            self.recorded_audio = self.__record_with_timer(10)
             prompt = "What do you want to translate? (speech, image, or image with prompt)"
+            self.audio.output_speech(prompt)
             print(prompt)
             self.gui.display_text_in_window(prompt)
+            self.recorded_audio = self.__record_with_timer(10)
             while True:
                 text = self.__recognize_speech(self.recorded_audio)
                 if text:
@@ -153,6 +157,7 @@ class IOManager:
         if wait_for_wake_word():
             print("Wake word detected! Starting configuration...")
             self.gui.display_text_in_window("Wake word detected! Starting configuration...")
+            self.audio.output_speech("Wake word detected! Starting configuration...")
 
             # Get source language
             config['source_lang'] = get_language_input("What is the source language?")
@@ -167,6 +172,7 @@ class IOManager:
             final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
             print(final_config)
             self.gui.display_text_in_window(final_config)
+            self.audio.output_speech(final_config)
 
             return config if all(config.values()) else None
 
