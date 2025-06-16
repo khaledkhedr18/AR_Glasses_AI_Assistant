@@ -13,8 +13,8 @@ class IOManager:
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.camera_running = False
-        self.captured_image = None
-        self.frame = None
+        self.image_captured = None
+        self.frame_captured = None
         self.audio_running = False
         self.recorded_audio = None
         self.wake_word = "hi david"
@@ -24,8 +24,8 @@ class IOManager:
     def start_camera_stream(self):
         with self.camera_lock:
             if not self.camera_running:
-                self.frame = self.camera.capture_frame()
-                self.gui.display_image_in_window("camera window", self.frame)
+                self.frame_captured = self.camera.capture_frame()
+                self.gui.display_image_in_window("camera window", self.frame_captured)
                 self.camera_running = True
 
     def stop_camera_stream(self):
