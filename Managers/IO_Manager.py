@@ -11,6 +11,7 @@ class IOManager:
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
+        self.recognizer = KaldiRecognizer()
         self.camera_running = False
         self.frame_captured = None
         self.audio_running = False
@@ -85,7 +86,7 @@ class IOManager:
             self.gui.display_text_in_widget("ai window", prompt)
             self.recorded_audio = self.__record_with_timer(5)
             while True:
-                text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
+                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
                 if text and self.wake_word in text:
                     return True
                 time.sleep(0.1)
@@ -96,7 +97,7 @@ class IOManager:
             self.gui.display_text_in_widget(prompt)
             self.recorded_audio = self.__record_with_timer(5)
             while True:
-                text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
+                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
                 if text:
                     for lang in lang_map:
                         if lang in text:
@@ -110,7 +111,7 @@ class IOManager:
             self.gui.display_text_in_widget(prompt)
             self.recorded_audio = self.__record_with_timer(5)
             while True:
-                text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
+                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
                 if text:
                     if 'image' in text and 'speech' in text:
                         return 'both'
@@ -165,7 +166,7 @@ class IOManager:
                 return None
 
             # Convert speech to text
-            text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
+            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
             if not text:
                 return None
 
