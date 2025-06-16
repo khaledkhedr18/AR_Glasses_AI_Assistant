@@ -1,4 +1,3 @@
-from PyQt5.QtCore import QObject
 from fuzzywuzzy import fuzz
 from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
 

@@ -1,6 +1,5 @@
 from transformers import MarianMTModel, MarianTokenizer, pipeline
 import threading
-from PyQt5.QtCore import QObject, QTimer
 from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
 from Network_Manager.Network_Handler import Network_Handler
 
