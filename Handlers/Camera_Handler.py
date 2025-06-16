@@ -12,14 +12,15 @@ class CameraHandler:
         self.frame_buffer = None
         self.picam2 = None
         self.camera_lock = threading.Lock()
-        self.capture_width = 1920
-        self.capture_height = 1080
-        self.quality = 90
-        self.save_dir = r"Saved_Images"
+        self.capture_width = 1920                       # config file
+        self.capture_height = 1080                      # config file
+        self.quality = 90                               # config file
+        self.save_dir = r"/tmp/AIAssistant/"            # config file
+        self.saved_image_name = "captured_image.jpg"    # config file
         self.image_save_path = None
         self.__initialize_camera()
 
-    def capture_image(self):
+    def capture_and_save_image(self):
         """
         Capture an image from the camera and save it to a static path.
         Returns: str or None: The saved image path if successful, None if failed
@@ -30,7 +31,7 @@ class CameraHandler:
             os.makedirs(self.save_dir)
 
         # Use os.path.join for cross-platform compatibility
-        self.image_save_path = os.path.join(self.save_dir, "captured_image.jpg")
+        self.image_save_path = os.path.join(self.save_dir, self.saved_image_name)
 
         with self.camera_lock:
             try:
@@ -62,9 +63,9 @@ class CameraHandler:
         set camera configurations like exposure, gain and focus mode.
 
         Args:
-            exposure (int, optional): Exposure time in microseconds
-            gain (float, optional): Analog gain value
-            focus_mode (str, optional): Focus mode (auto, continuous, manual)
+            exposure (int, optional): Exposure time in microseconds if not passed the default value will be used
+            gain (float, optional): Analog gain value if not passed the default value will be used
+            focus_mode (str, optional): Focus mode (auto, continuous, manual) if not passed the default value of hardware will be used
 
         Returns:
             bool: True if parameters were set successfully, False otherwise

@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QWidget, QSizePo
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QFont, QColor
 
 from IO_Manager.IO_Handlers.Camera_Handler import CameraWidget
-from utils.logging import Logger
+from Utils.logging import Logger
 
 # Check if on Raspberry Pi or development machine
 try:

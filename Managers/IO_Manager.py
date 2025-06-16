@@ -1,11 +1,10 @@
 from IO_Handlers.GUI_Handler import GUIHandler
 from IO_Handlers.Camera_Handler import CameraHandler
 from IO_Handlers.Audio_Handler import AudioHandler
-from vosk import Model, KaldiRecognizer
+from Utils.Kaldi_Recognizer import KaldiRecognizer
 import threading
 import time
-import wave
-import json
+
 
 class IOManager:
     def __init__(self):
@@ -13,11 +12,10 @@ class IOManager:
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.camera_running = False
-        self.image_captured = None
         self.frame_captured = None
         self.audio_running = False
         self.recorded_audio = None
-        self.wake_word = "hi david"
+        self.wake_word = "hi david"             # config file
         self.camera_lock = threading.Lock()
         self.audio_lock = threading.Lock()
 
@@ -25,19 +23,20 @@ class IOManager:
         with self.camera_lock:
             if not self.camera_running:
                 self.frame_captured = self.camera.capture_frame()
-                self.gui.display_image_in_window("camera window", self.frame_captured)
+                self.gui.display_image_in_widget("camera window", self.frame_captured)
                 self.camera_running = True
 
     def stop_camera_stream(self):
         with self.camera_lock:
             if self.camera_running:
-                self.gui.hide_window("camera window")
+                # stop camera thread
+                self.gui.hide_widget("camera window")
                 self.camera_running = False
 
     def get_image(self):
         with self.camera_lock:
             if self.camera_running:
-                return self.camera.capture_image()
+                return self.camera.capture_and_save_image()
             return None
 
     def start_audio_listening(self):
@@ -57,38 +56,6 @@ class IOManager:
             if self.audio_running:
                 return self.recorded_audio
             return None
-
-    def __record_with_timer(self, timeout_seconds):
-        """
-        Starts recording and sets a timer to stop after timeout_seconds
-        Args:
-            timeout_seconds (int): Seconds to record
-        Returns:
-            str: Path to the recorded audio file
-        """
-        with self.audio_lock:
-            if not self.audio_running:
-                self.audio_running = True
-                recorded_event = threading.Event()
-                recorded_audio = [None]  # Using list as a mutable container
-
-                def stop_recording_timer():
-                    recorded_audio[0] = self.audio.stop_recording()
-                    recorded_event.set()
-
-                self.audio.start_recording()
-                timer = threading.Timer(timeout_seconds, stop_recording_timer)
-                timer.start()
-
-                # Wait for recording to complete
-                recorded_event.wait(timeout=timeout_seconds + 1)  # Add 1 second buffer
-
-                # Cancel timer if it hasn't fired yet
-                if timer.is_alive():
-                    timer.cancel()
-
-                self.audio_running = False
-                return recorded_audio[0]
 
     def get_user_config(self):
         """
@@ -116,9 +83,9 @@ class IOManager:
             self.audio.output_speech(prompt)
             print(prompt)
             self.gui.display_text_in_widget("ai window", prompt)
-            self.recorded_audio = self.__record_with_timer(10)
+            self.recorded_audio = self.__record_with_timer(5)
             while True:
-                text = self.__recognize_speech(self.recorded_audio)
+                text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
                 if text and self.wake_word in text:
                     return True
                 time.sleep(0.1)
@@ -127,9 +94,9 @@ class IOManager:
             self.audio.output_speech(prompt)
             print(prompt)
             self.gui.display_text_in_widget(prompt)
-            self.recorded_audio = self.__record_with_timer(10)
+            self.recorded_audio = self.__record_with_timer(5)
             while True:
-                text = self.__recognize_speech(self.recorded_audio)
+                text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
                 if text:
                     for lang in lang_map:
                         if lang in text:
@@ -141,9 +108,9 @@ class IOManager:
             self.audio.output_speech(prompt)
             print(prompt)
             self.gui.display_text_in_widget(prompt)
-            self.recorded_audio = self.__record_with_timer(10)
+            self.recorded_audio = self.__record_with_timer(5)
             while True:
-                text = self.__recognize_speech(self.recorded_audio)
+                text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
                 if text:
                     if 'image' in text and 'speech' in text:
                         return 'both'
@@ -198,7 +165,7 @@ class IOManager:
                 return None
 
             # Convert speech to text
-            text = self.__recognize_speech(self.recorded_audio)
+            text = KaldiRecognizer.recognize_text_from_speech(self.recorded_audio)
             if not text:
                 return None
 
@@ -221,48 +188,36 @@ class IOManager:
         # Updates GUI with text
         self.gui.display_text_in_widget(label, text)
 
-    def __recognize_speech(self, audio_file):
+    def __record_with_timer(self, timeout_seconds):
         """
-        Convert audio file to text using Vosk's KaldiRecognizer
+        Starts recording and sets a timer to stop after timeout_seconds
         Args:
-            audio_file (str): Path to the audio file
+            timeout_seconds (int): Seconds to record
         Returns:
-            str: Recognized text or None if recognition fails
+            str: Path to the recorded audio file
         """
+        with self.audio_lock:
+            if not self.audio_running:
+                self.audio_running = True
+                recorded_event = threading.Event()
+                recorded_audio = [None]  # Using list as a mutable container
 
-        try:
-            # Initialize Vosk model (ensure you have the model downloaded)
-            model = Model(model_path=r"/home/pi/Desktop/gradproj/vosk-model-small-en-us-0.15")
+                def stop_recording_timer():
+                    recorded_audio[0] = self.audio.stop_recording()
+                    recorded_event.set()
 
-            # Open the audio file
-            wf = wave.open(audio_file, "rb")
+                self.audio.start_recording()
+                timer = threading.Timer(timeout_seconds, stop_recording_timer)
+                timer.start()
 
-            # Create recognizer instance
-            recognizer = KaldiRecognizer(model, wf.getframerate())
+                # Wait for recording to complete
+                recorded_event.wait(timeout=timeout_seconds + 1)  # Add 1 second buffer
 
-            # Process audio file
-            text = ""
-            while True:
-                data = wf.readframes(4000)
-                if len(data) == 0:
-                    break
-                if recognizer.AcceptWaveform(data):
-                    result = json.loads(recognizer.Result())
-                    text += result.get("text", "") + " "
+                # Cancel timer if it hasn't fired yet
+                if timer.is_alive():
+                    timer.cancel()
 
-            # Get final result
-            final_result = json.loads(recognizer.FinalResult())
-            text += final_result.get("text", "")
-
-            # Clean up
-            wf.close()
-
-            text = text.strip().lower()
-            print(f"Recognized text: {text}")
-            return text if text else None
-
-        except Exception as e:
-            print(f"Error processing audio file: {e}")
-            return None
+                self.audio_running = False
+                return recorded_audio[0]
 
 
