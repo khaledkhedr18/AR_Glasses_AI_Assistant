@@ -2,7 +2,7 @@ from vosk import Model, KaldiRecognizer
 import wave
 import json
 
-class KaldiRecognizer:
+class SpeechRecognizer:
     def __init__(self, model_path, vocab_path, grammar_path=None):
         self.model_path = model_path
         self.vocab_path = vocab_path

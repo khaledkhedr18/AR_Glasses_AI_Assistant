@@ -1,7 +1,7 @@
 from IO_Handlers.GUI_Handler import GUIHandler
 from IO_Handlers.Camera_Handler import CameraHandler
 from IO_Handlers.Audio_Handler import AudioHandler
-from Utils.Kaldi_Recognizer import KaldiRecognizer
+from Utils.Kaldi_Recognizer import SpeechRecognizer
 import threading
 import time
 
@@ -11,7 +11,7 @@ class IOManager:
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
-        self.recognizer = KaldiRecognizer()
+        self.recognizer = SpeechRecognizer()
         self.camera_running = False
         self.frame_captured = None
         self.audio_running = False
