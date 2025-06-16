@@ -1,6 +1,6 @@
-from Handlers.GUI_Handler import GUIHandler
-from Handlers.Camera_Handler import CameraHandler
-from Handlers.Audio_Handler import AudioHandler
+from IO_Handlers.GUI_Handler import GUIHandler
+from IO_Handlers.Camera_Handler import CameraHandler
+from IO_Handlers.Audio_Handler import AudioHandler
 from vosk import Model, KaldiRecognizer
 import threading
 import time
