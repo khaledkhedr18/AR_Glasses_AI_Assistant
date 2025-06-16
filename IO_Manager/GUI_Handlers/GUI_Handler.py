@@ -24,6 +24,93 @@ class GUI_Handler:
         # Load the appropriate GUI handler
         self._load_gui_handler()
 
+    def create_overlay_widget(self, config):
+        """
+        Create an overlay widget using the provided configuration
+
+        Args:
+            config (dict): Configuration for the widget including 'type'
+
+        Returns:
+            The created widget instance
+        """
+        if not config or 'type' not in config:
+            print("Error: Widget configuration must include a 'type'")
+            return None
+
+        if self.gui_handler:
+            return self.gui_handler.create_overlay_widget(config['type'], config)
+        return None
+
+    def hide_widget(self, widget_instance):
+        """
+        Hide a widget
+
+        Args:
+            widget_instance: The widget to hide
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.gui_handler:
+            return self.gui_handler.hide_widget(widget_instance)
+        return False
+
+    def hide_all_widgets(self):
+        """
+        Hide all overlay widgets
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.gui_handler:
+            return self.gui_handler.hide_all_widgets()
+        return False
+
+    def show_widget(self, widget_instance):
+        """
+        Show a previously hidden widget
+
+        Args:
+            widget_instance: The widget to show
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.gui_handler:
+            return self.gui_handler.show_widget(widget_instance)
+        return False
+
+    def display_text_in_widget(self, text, widget_instance):
+        """
+        Display text in a widget
+
+        Args:
+            text (str): The text to display
+            widget_instance: The widget to update
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.gui_handler:
+            return self.gui_handler.display_text_in_widget(text, widget_instance)
+        return False
+
+    def display_image_in_widget(self, image_path, widget_instance):
+        """
+        Display an image in a widget
+
+        Args:
+            image_path (str): Path to the image file
+            widget_instance: The widget to update
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.gui_handler:
+            return self.gui_handler.display_image_in_widget(image_path, widget_instance)
+        return False
+
     def _load_gui_handler(self):
         """Load the appropriate GUI handler based on the selected type"""
         # Get the current directory
