@@ -2,21 +2,25 @@ import threading
 import cv2
 from picamera2 import Picamera2
 import libcamera
+from Utils.Config import CAMERA_CONFIG
+from Utils.Logging import Logger
 import os
+
 
 class CameraHandler:
     def __init__(self):
         """
         Initialize the Camera
         """
+        self.logger = Logger()
+        self.camera_lock = threading.Lock()
         self.frame_buffer = None
         self.picam2 = None
-        self.camera_lock = threading.Lock()
-        self.capture_width = 1920                       # config file
-        self.capture_height = 1080                      # config file
-        self.quality = 90                               # config file
-        self.save_dir = r"/tmp/AIAssistant/"            # config file
-        self.saved_image_name = "captured_image.jpg"    # config file
+        self.capture_width = CAMERA_CONFIG['CAPTURE_WIDTH']
+        self.capture_height = CAMERA_CONFIG['CAPTURE_HEIGHT']
+        self.quality = CAMERA_CONFIG['IMAGE_QUALITY']
+        self.save_dir = CAMERA_CONFIG['SAVE_DIRECTORY']
+        self.saved_image_name = CAMERA_CONFIG['IMAGE_FILENAME']
         self.image_save_path = None
         self.__initialize_camera()
 
@@ -39,10 +43,10 @@ class CameraHandler:
                 buffer = self.picam2.capture_array("main")
                 # Save the image with specified quality
                 cv2.imwrite(self.image_save_path, buffer, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
-                print(f"Image saved as {self.image_save_path}")
+                self.logger.info(f"Image saved as {self.image_save_path}")
                 return self.image_save_path
             except Exception as e:
-                print(f"Error capturing image: {e}")
+                self.logger.log_error_with_traceback("Error capturing image", e)
                 return None
 
     def capture_frame(self):
@@ -55,7 +59,7 @@ class CameraHandler:
                     return frame
                 return None
             except Exception as e:
-                print(f"Error capturing frame: {str(e)}")
+                self.logger.log_error_with_traceback("Error capturing frame", e)
                 return None
 
     def set_camera_configurations(self, exposure=None, gain=None, focus_mode=None):
@@ -71,6 +75,7 @@ class CameraHandler:
             bool: True if parameters were set successfully, False otherwise
         """
         if not self.picam2:
+            self.logger.warning("Camera not initialized, cannot set configurations")
             return False
 
         try:
@@ -91,11 +96,12 @@ class CameraHandler:
                     controls["AfMode"] = libcamera.controls.AfModeEnum.Manual
 
             if controls:
+                self.logger.info("Camera configurations updated successfully")
                 self.picam2.set_controls(controls)
             return True
 
         except Exception as e:
-            print(f"Error setting camera parameters: {str(e)}")
+            self.logger.log_error_with_traceback("Error setting camera parameters", e)
             return False
 
     def __initialize_camera(self):
@@ -113,31 +119,41 @@ class CameraHandler:
         try:
             if self.picam2 is None:
                 self.picam2 = Picamera2()
-                # Use sensor resolution and proper color format
                 config = self.picam2.create_preview_configuration(
                     main={
-                        "size": (self.capture_width, self.capture_height),  # Native sensor mode for better FPS
-                        "format": "RGB888"},
-                    controls={
-                        "AwbEnable": True,
-                        "AeEnable": True,
-                        "ExposureTime": 10000,  # Adjust based on lighting
-                        "AnalogueGain": 1.0,
-                        "FrameDurationLimits": (33333, 33333)  # 30fps
+                        "size": (self.capture_width, self.capture_height),
+                        "format": CAMERA_CONFIG['COLOR_FORMAT']
                     },
-                    transform=libcamera.Transform(hflip=1, vflip=1)  # Adjust based on mounting
+                    controls={
+                        "AwbEnable": CAMERA_CONFIG['AWB_ENABLE'],
+                        "AeEnable": CAMERA_CONFIG['AE_ENABLE'],
+                        "ExposureTime": CAMERA_CONFIG['DEFAULT_EXPOSURE'],
+                        "AnalogueGain": CAMERA_CONFIG['DEFAULT_GAIN'],
+                        "FrameDurationLimits": (CAMERA_CONFIG['FRAME_DURATION'],
+                                                CAMERA_CONFIG['FRAME_DURATION'])
+                    },
+                    transform=libcamera.Transform(
+                        hflip=CAMERA_CONFIG['HFLIP'],
+                        vflip=CAMERA_CONFIG['VFLIP']
+                    )
                 )
                 self.picam2.configure(config)
 
-                # Set autofocus controls
-                controls = {"AfMode": libcamera.controls.AfModeEnum.Continuous}
-                self.picam2.set_controls(controls)
+                # Set default focus mode
+                mode = CAMERA_CONFIG['DEFAULT_FOCUS_MODE']
+                if mode == 'continuous':
+                    focus_mode = libcamera.controls.AfModeEnum.Continuous
+                elif mode == 'auto':
+                    focus_mode = libcamera.controls.AfModeEnum.Auto
+                else:
+                    focus_mode = libcamera.controls.AfModeEnum.Manual
+
+                self.picam2.set_controls({"AfMode": focus_mode})
                 self.picam2.start()
 
-                # Get actual capture dimensions
                 self.capture_width = config["main"]["size"][0]
                 self.capture_height = config["main"]["size"][1]
-
+                self.logger.info("Camera initialized successfully")
 
         except Exception as e:
-            print(f"Camera Initialization Error: {e}")
+            self.logger.log_error_with_traceback("Camera Initialization Error", e)

@@ -10,3 +10,8 @@ Network_Manager/
 /Handlers/Translation_Handler.py
 /Managers/LLM_Manager.py
 /Managers/Network_Manager.py
+/Handlers/Audio_Handler.py
+/Utils/WorkerThread.py
+/Utils/Services.py
+/LLM_Manager.py
+

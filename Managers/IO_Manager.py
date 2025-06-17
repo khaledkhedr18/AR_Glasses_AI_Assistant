@@ -1,7 +1,9 @@
-from IO_Handlers.GUI_Handler import GUIHandler
-from IO_Handlers.Camera_Handler import CameraHandler
-from IO_Handlers.Audio_Handler import AudioHandler
+from Handlers.GUI_Handler import GUIHandler
+from Handlers.Camera_Handler import CameraHandler
+from Handlers.Audio_Handler import AudioHandler
 from Utils.Kaldi_Recognizer import SpeechRecognizer
+from Utils.Logging import Logger
+from Utils.Config import IO_CONFIG
 import threading
 import time
 
@@ -11,44 +13,65 @@ class IOManager:
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
-        self.recognizer = SpeechRecognizer()
+        self.logger = Logger()
+        self.wake_word = IO_CONFIG['WAKE_WORD']
+        self.supported_languages = IO_CONFIG['SUPPORTED_LANGUAGES']
+        self.recognizer = SpeechRecognizer(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
         self.camera_running = False
+        self.camera_thread = None
         self.frame_captured = None
         self.audio_running = False
         self.recorded_audio = None
-        self.wake_word = "hi david"             # config file
         self.camera_lock = threading.Lock()
         self.audio_lock = threading.Lock()
+        self.interaction_lock = threading.Lock()
 
     def start_camera_stream(self):
+        """Starts camera stream in a separate thread with 30ms interval"""
         with self.camera_lock:
-            if not self.camera_running:
-                self.frame_captured = self.camera.capture_frame()
-                self.gui.display_image_in_widget("camera window", self.frame_captured)
+            if not self.camera_running and (not self.camera_thread or not self.camera_thread.is_alive()):
                 self.camera_running = True
+                self.camera_thread = threading.Thread(target=self.__stream_camera)
+                self.camera_thread.daemon = True
+                self.logger.info("Starting camera stream thread")
+                self.camera_thread.start()
+            else:
+                self.logger.info("Camera stream already running")
 
     def stop_camera_stream(self):
+        """Stops the camera stream thread and hides the camera window"""
         with self.camera_lock:
             if self.camera_running:
-                # stop camera thread
-                self.gui.hide_widget("camera window")
-                self.camera_running = False
+                self.logger.info("Stopping camera stream")
+                self.camera_running = False  # This will break the while loop in __stream_camera
+                if self.camera_thread and self.camera_thread.is_alive():
+                    self.camera_thread.join(timeout=IO_CONFIG['CAMERA_THREAD_TIMEOUT'])  # Wait up to configurable seconds for thread to finish
+                    self.logger.info("Camera thread stopped")
+                self.gui.delete_overlay_widget(IO_CONFIG['CAMERA_WINDOW_NAME'])
+                self.camera_thread = None
+                self.frame_captured = None
+            else:
+                self.logger.info("Camera stream already stopped")
 
     def get_image(self):
         with self.camera_lock:
             if self.camera_running:
+                self.logger.warning("Camera not running, cannot capture image")
                 return self.camera.capture_and_save_image()
+            self.logger.warning("Camera not running, cannot capture image")
             return None
 
     def start_audio_listening(self):
         with self.audio_lock:
             if not self.audio_running:
+                self.logger.info("Starting audio recording")
                 self.audio.start_recording()
                 self.audio_running = True
 
     def stop_audio_listening(self):
         with self.audio_lock:
             if self.audio_running:
+                self.logger.info("Stopping audio recording")
                 self.recorded_audio = self.audio.stop_recording()
                 self.audio_running = False
 
@@ -57,6 +80,25 @@ class IOManager:
             if self.audio_running:
                 return self.recorded_audio
             return None
+
+    def interact_with_user(self, text, mode="both"):
+        """
+        Interacts with user through speech and display with thread safety.
+        Args:
+            text (str): Text to be spoken and displayed
+            mode (str): Interaction mode - "speech", "display", or "both" (default)
+        """
+        with self.interaction_lock:  # Create a dedicated lock for interaction
+            try:
+                if mode in ["speech", "both"]:
+                    self.audio.output_speech(text)
+
+                if mode in ["display", "both"]:
+                    self.logger.info(f"AI: {text}")
+                    self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], text)
+
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error in user interaction", e)
 
     def get_user_config(self):
         """
@@ -70,46 +112,37 @@ class IOManager:
             'translation_mode': None
         }
 
-        # Language mapping
-        lang_map = {
-            'arabic': 'ar',
-            'english': 'en',
-            'french': 'fr',
-            'spanish': 'es',
-            'german': 'de'
-        }
-
         def wait_for_wake_word():
-            prompt = f"Please say the wake word '{self.wake_word}' to start configuration."
+            prompt = f"Please say the wake word '{IO_CONFIG['WAKE_WORD']}' to start configuration."
             self.audio.output_speech(prompt)
-            print(prompt)
-            self.gui.display_text_in_widget("ai window", prompt)
-            self.recorded_audio = self.__record_with_timer(5)
+            self.logger.info(prompt)
+            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
+            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
             while True:
                 text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if text and self.wake_word in text:
+                if IO_CONFIG['WAKE_WORD'] in text:
                     return True
                 time.sleep(0.1)
 
         def get_language_input(prompt):
             self.audio.output_speech(prompt)
-            print(prompt)
-            self.gui.display_text_in_widget(prompt)
-            self.recorded_audio = self.__record_with_timer(5)
+            self.logger.info(prompt)
+            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
+            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
             while True:
                 text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
                 if text:
-                    for lang in lang_map:
+                    for lang, code in IO_CONFIG['SUPPORTED_LANGUAGES'].items():
                         if lang in text:
-                            return lang_map[lang]
+                            return code
                 time.sleep(0.1)
 
         def get_translation_mode():
             prompt = "What do you want to translate? (speech, image, or image with prompt)"
             self.audio.output_speech(prompt)
-            print(prompt)
-            self.gui.display_text_in_widget(prompt)
-            self.recorded_audio = self.__record_with_timer(5)
+            self.logger.info(prompt)
+            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
+            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
             while True:
                 text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
                 if text:
@@ -123,9 +156,10 @@ class IOManager:
 
         # Start conversation flow
         if wait_for_wake_word():
-            print("Wake word detected! Starting configuration...")
-            self.gui.display_text_in_widget("Wake word detected! Starting configuration...")
-            self.audio.output_speech("Wake word detected! Starting configuration...")
+            message = "Wake word detected! Starting configuration..."
+            self.logger.info(message)
+            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], message)
+            self.audio.output_speech(message)
 
             # Get source language
             config['source_lang'] = get_language_input("What is the source language?")
@@ -138,8 +172,8 @@ class IOManager:
 
             # Display final configuration
             final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
-            print(final_config)
-            self.gui.display_text_in_widget(final_config)
+            self.logger.info(final_config)
+            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], final_config)
             self.audio.output_speech(final_config)
 
             return config if all(config.values()) else None
@@ -151,13 +185,6 @@ class IOManager:
         Records audio and determines the command from user's voice input
         Returns: str - The command to execute ('start', 'stop', 'translate', 'exit')
         """
-        # Command keywords mapping
-        command_mapping = {
-            'start': ['start', 'begin', 'launch', 'activate', 'open'],
-            'stop': ['stop', 'end', 'finish', 'quit'],
-            'translate': ['translate', 'convert', 'change', 'interpret'],
-            'exit': ['exit', 'quit', 'close', 'leave']
-        }
 
         try:
             # Record audio for 5 seconds
@@ -172,17 +199,17 @@ class IOManager:
 
             # Convert to lowercase for better matching
             text = text.lower()
-            print(f"Recognized command: {text}")
+            self.logger.info(f"Recognized command: {text}")
 
             # Check for command keywords
-            for command, keywords in command_mapping.items():
+            for command, keywords in IO_CONFIG['COMMAND_KEYWORDS'].items():
                 if any(keyword in text for keyword in keywords):
                     return command
 
             return None
 
         except Exception as e:
-            print(f"Error processing command: {e}")
+            self.logger.info(f"Error processing command: {e}")
             return None
 
     def display_text(self, label, text):
@@ -199,6 +226,7 @@ class IOManager:
         """
         with self.audio_lock:
             if not self.audio_running:
+                self.logger.info(f"Starting timed recording for {timeout_seconds} seconds")
                 self.audio_running = True
                 recorded_event = threading.Event()
                 recorded_audio = [None]  # Using list as a mutable container
@@ -218,7 +246,20 @@ class IOManager:
                 if timer.is_alive():
                     timer.cancel()
 
+                self.logger.info("Timed recording completed")
                 self.audio_running = False
                 return recorded_audio[0]
 
-
+    def __stream_camera(self):
+        """Private method to handle continuous camera streaming"""
+        while self.camera_running:  # Will stop when camera_running becomes False
+            try:
+                if not self.camera_running:  # Double check in case flag changed
+                    break
+                self.frame_captured = self.camera.capture_frame()
+                self.gui.display_image_in_widget(IO_CONFIG['CAMERA_WINDOW_NAME'], self.frame_captured)
+                time.sleep(IO_CONFIG['FRAME_INTERVAL'])  # 30ms interval
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error in camera stream", e)
+                self.camera_running = False  # Ensure we exit on error
+                break

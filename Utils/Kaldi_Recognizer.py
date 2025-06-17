@@ -1,52 +1,51 @@
 from vosk import Model, KaldiRecognizer
 import wave
 import json
+import io
+
 
 class SpeechRecognizer:
     def __init__(self, model_path):
-        self.model_path = model_path
+        """Initialize the recognizer with a Vosk model."""
+        self.model = Model(model_path)
 
-    def recognize_text_from_speech(self, audio_file):
+    def recognize_text_from_speech(self, wave_data):
         """
-        Convert audio file to text using Vosk's KaldiRecognizer
+        Convert WAV audio data to text using Vosk.
         Args:
-            audio_file (str): Path to the audio file
+            wave_data: BytesIO object containing WAV data or raw wave chunks
         Returns:
             str: Recognized text or None if recognition fails
         """
-
         try:
-            # Initialize Vosk model (ensure you have the model downloaded)
-            model = Model(model_path=r"/home/pi/Desktop/gradproj/vosk-model-small-en-us-0.15")
+            # If input is already a BytesIO/file-like object, use it directly
+            if isinstance(wave_data, (io.BytesIO, io.BufferedRandom)):
+                wf = wave.open(wave_data, "rb")
+            else:
+                # If input is raw bytes, wrap it in BytesIO
+                buffer = io.BytesIO(wave_data)
+                wf = wave.open(buffer, "rb")
 
-            # Open the audio file
-            wf = wave.open(audio_file, "rb")
+            with wf:
+                recognizer = KaldiRecognizer(self.model, wf.getframerate())
+                text = ""
 
-            # Create recognizer instance
-            recognizer = KaldiRecognizer(model, wf.getframerate())
+                # Process audio in chunks
+                while True:
+                    data = wf.readframes(4000)
+                    if len(data) == 0:
+                        break
+                    if recognizer.AcceptWaveform(data):
+                        result = json.loads(recognizer.Result())
+                        text += result.get("text", "") + " "
 
-            # Process audio file
-            text = ""
-            while True:
-                data = wf.readframes(4000)
-                if len(data) == 0:
-                    break
-                if recognizer.AcceptWaveform(data):
-                    result = json.loads(recognizer.Result())
-                    text += result.get("text", "") + " "
-
-            # Get final result
-            final_result = json.loads(recognizer.FinalResult())
-            text += final_result.get("text", "")
-
-            # Clean up
-            wf.close()
+                # Get final recognition result
+                final_result = json.loads(recognizer.FinalResult())
+                text += final_result.get("text", "")
 
             text = text.strip().lower()
-            print(f"Recognized text: {text}")
             return text if text else None
 
         except Exception as e:
-            print(f"Error processing audio file: {e}")
+            print(f"Error processing audio: {e}")
             return None
-
