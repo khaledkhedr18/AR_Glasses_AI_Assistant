@@ -3,10 +3,8 @@ import wave
 import json
 
 class SpeechRecognizer:
-    def __init__(self, model_path, vocab_path, grammar_path=None):
+    def __init__(self, model_path):
         self.model_path = model_path
-        self.vocab_path = vocab_path
-        self.grammar_path = grammar_path
 
     def recognize_text_from_speech(self, audio_file):
         """
