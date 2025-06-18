@@ -12,6 +12,6 @@ Network_Manager/
 /Managers/Network_Manager.py
 /Handlers/Audio_Handler.py
 /Utils/WorkerThread.py
-/Utils/Services.py
+#/Utils/Services.py
 /LLM_Manager.py
 
