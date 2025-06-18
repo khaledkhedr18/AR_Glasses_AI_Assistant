@@ -1,10 +1,9 @@
 from Handlers.GUI_Handler import GUIHandler
 from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
-from Utils.Kaldi_Recognizer import SpeechRecognizer
-from Utils.Logging import Logger
-from Utils.Config import IO_CONFIG
-from Utils.Services import Services
+from utils.Logging import Logger
+from utils.Config import IO_CONFIG
+from utils.Services import Services
 import threading
 import time
 
@@ -14,7 +13,6 @@ class IOManager:
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
-        self.recognizer = SpeechRecognizer(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
         self.Services = Services()
         self.logger = Logger()
         self.wake_word = IO_CONFIG['WAKE_WORD']
@@ -126,7 +124,7 @@ class IOManager:
             self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
             if not self.recorded_audio:
                 return None
-            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if text:
                 return self.Services.verify_user_input(text, IO_CONFIG['WAKE_WORD']) is not None
 
@@ -142,7 +140,7 @@ class IOManager:
             self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
             if not self.recorded_audio:
                 return None
-            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if text:
                 return self.Services.verify_user_input(text, IO_CONFIG['SUPPORTED_LANGUAGES'])
             return None
@@ -157,7 +155,7 @@ class IOManager:
             self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
             if not self.recorded_audio:
                 return None
-            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if text:
                 return self.Services.verify_user_input(text, IO_CONFIG['MODE_KEYWORDS'])
             return None
@@ -223,7 +221,7 @@ class IOManager:
                 return None
 
             # Convert speech to text
-            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if not text:
                 return None
 

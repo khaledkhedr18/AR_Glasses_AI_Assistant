@@ -2,8 +2,8 @@ import threading
 import cv2
 from picamera2 import Picamera2
 import libcamera
-from Utils.Config import CAMERA_CONFIG
-from Utils.Logging import Logger
+from utils.Config import CAMERA_CONFIG
+from utils.Logging import Logger
 import os
 
 

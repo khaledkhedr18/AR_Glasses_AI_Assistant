@@ -11,7 +11,9 @@ Network_Manager/
 /Managers/LLM_Manager.py
 /Managers/Network_Manager.py
 /Handlers/Audio_Handler.py
-/Utils/WorkerThread.py
-#/Utils/Services.py
+/utils/WorkerThread.py
+/utils/Kaldi_Recognizer.py
+#/utils/Services.py
 /LLM_Manager.py
+
 

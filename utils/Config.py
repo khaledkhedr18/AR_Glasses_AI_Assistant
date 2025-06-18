@@ -1,5 +1,5 @@
 # config.py
-from Utils.Services import Services
+from utils.Services import Services
 
 # Camera Handler Configuration
 CAMERA_CONFIG = {
