@@ -1,4 +1,5 @@
 # config.py
+from Utils.Services import Services
 
 # Camera Handler Configuration
 CAMERA_CONFIG = {
@@ -38,7 +39,7 @@ IO_CONFIG = {
 
     # Audio settings
     'AUDIO_RECORD_TIMEOUT': 5,
-    'WAKE_WORD': "hey david",
+    'WAKE_WORD': "hi david",
 
     # GUI window names
     'CAMERA_WINDOW_NAME': "camera window",
@@ -50,9 +51,15 @@ IO_CONFIG = {
         'arabic': 'ar',
         'english': 'en',
         'french': 'fr',
-        'spanish': 'es',
-        'german': 'de'
     },
+
+    'MAX_ATTEMPTS': 3,  # Max attempts for user input verification
+
+    'MODE_KEYWORDS' : {
+            "speech": ["speech", "voice", "audio", "speak", "one", "1"],
+            "image": ["image", "picture", "photo", "text", "two", "2"],
+            "both": ["both", "combined", "all", "three", "3"]
+        },
 
     'COMMAND_KEYWORDS': {
         'start': ['start', 'begin', 'launch', 'activate', 'open'],
@@ -63,4 +70,11 @@ IO_CONFIG = {
 
     # Models Paths
     'RECOGNIZER_MODEL_PATH': r"/path/to/kaldi/model",
+}
+
+# Services Configuration
+SERVICES_CONFIG = {
+    # FuzzyWuzzy confidence_threshold
+    'FUZZY_CONFIDENCE_THRESHOLD': 75,
+
 }

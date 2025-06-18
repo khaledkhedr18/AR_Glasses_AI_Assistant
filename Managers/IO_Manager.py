@@ -4,6 +4,7 @@ from Handlers.Audio_Handler import AudioHandler
 from Utils.Kaldi_Recognizer import SpeechRecognizer
 from Utils.Logging import Logger
 from Utils.Config import IO_CONFIG
+from Utils.Services import Services
 import threading
 import time
 
@@ -14,6 +15,7 @@ class IOManager:
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.recognizer = SpeechRecognizer(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
+        self.Services = Services()
         self.logger = Logger()
         self.wake_word = IO_CONFIG['WAKE_WORD']
         self.supported_languages = IO_CONFIG['SUPPORTED_LANGUAGES']
@@ -105,6 +107,7 @@ class IOManager:
         Interactive configuration through voice conversation with AI agent
         Returns: dict with source_lang, dest_lang, and translation_mode
         """
+        max_attempts = IO_CONFIG['MAX_ATTEMPTS']  # Maximum number of retry attempts
 
         config = {
             'source_lang': None,
@@ -113,72 +116,99 @@ class IOManager:
         }
 
         def wait_for_wake_word():
+            """
+            Waits for the user to say the wake word to start configuration
+            """
             prompt = f"Please say the wake word '{IO_CONFIG['WAKE_WORD']}' to start configuration."
-            self.audio.output_speech(prompt)
             self.logger.info(prompt)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
+            self.interact_with_user(prompt)
+
             self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
-            while True:
-                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if IO_CONFIG['WAKE_WORD'] in text:
-                    return True
-                time.sleep(0.1)
+            if not self.recorded_audio:
+                return None
+            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            if text:
+                return self.Services.verify_user_input(text, IO_CONFIG['WAKE_WORD']) is not None
+
+            return False
 
         def get_language_input(prompt):
-            self.audio.output_speech(prompt)
+            """
+            Asks user for a language input and returns the recognized language code
+            """
             self.logger.info(prompt)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
-            while True:
-                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if text:
-                    for lang, code in IO_CONFIG['SUPPORTED_LANGUAGES'].items():
-                        if lang in text:
-                            return code
-                time.sleep(0.1)
+            self.interact_with_user(prompt)
 
-        def get_translation_mode():
-            prompt = "What do you want to translate? (speech, image, or image with prompt)"
-            self.audio.output_speech(prompt)
-            self.logger.info(prompt)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
             self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
-            while True:
-                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if text:
-                    if 'image' in text and 'speech' in text:
-                        return 'both'
-                    elif 'image' in text:
-                        return 'image'
-                    elif 'speech' in text:
-                        return 'speech'
-                time.sleep(0.1)
+            if not self.recorded_audio:
+                return None
+            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            if text:
+                return self.Services.verify_user_input(text, IO_CONFIG['SUPPORTED_LANGUAGES'])
+            return None
+
+        def get_translation_mode(prompt):
+            """
+            Asks user for translation mode (speech, image, or both) and returns the selected mode
+            """
+            self.logger.info(prompt)
+            self.interact_with_user(prompt)
+
+            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
+            if not self.recorded_audio:
+                return None
+            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            if text:
+                return self.Services.verify_user_input(text, IO_CONFIG['MODE_KEYWORDS'])
+            return None
+
+        def retry_input(input_func, prompt, attempt=1):
+            """Helper function to handle retries for input functions"""
+            result = input_func(prompt)
+            if not result and attempt < max_attempts:
+                retry_message = f"Could not understand. Please try again. ({attempt + 1}/{max_attempts})"
+                self.interact_with_user(retry_message)
+                return retry_input(input_func, prompt, attempt + 1)
+            elif not result:
+                restart_message = "Maximum attempts reached. Please say the wake word to start over."
+                self.interact_with_user(restart_message)
+                return None
+            return result
 
         # Start conversation flow
-        if wait_for_wake_word():
-            message = "Wake word detected! Starting configuration..."
-            self.logger.info(message)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], message)
-            self.audio.output_speech(message)
+        if not wait_for_wake_word():
+            return None
 
-            # Get source language
-            config['source_lang'] = get_language_input("What is the source language?")
+        message = "Wake word detected! Starting configuration..."
+        self.logger.info(message)
+        self.interact_with_user(message)
 
-            # Get target language
-            config['dest_lang'] = get_language_input("What is the target language?")
+        # Get source language
+        source_lang = retry_input(get_language_input, "What is the source language?")
+        if not source_lang:
+            self.logger.error("Failed to recognize source language after multiple attempts")
+            return None
+        config['source_lang'] = source_lang
 
-            # Get translation mode
-            config['translation_mode'] = get_translation_mode()
+        # Get target language
+        dest_lang = retry_input(get_language_input, "What is the target language?")
+        if not dest_lang:
+            self.logger.error("Failed to recognize destination language after multiple attempts")
+            return None
+        config['dest_lang'] = dest_lang
 
-            # Display final configuration
-            final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
-            self.logger.info(final_config)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], final_config)
-            self.audio.output_speech(final_config)
+        # Get translation mode
+        translation_mode = retry_input(get_translation_mode, "What do you want to translate? (speech, image, or image with prompt)")
+        if not translation_mode:
+            self.logger.error("Failed to recognize translation mode after multiple attempts")
+            return None
+        config['translation_mode'] = translation_mode
 
-            return config if all(config.values()) else None
-
-        return None
+        # Display final configuration
+        final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
+        self.logger.info(final_config)
+        self.interact_with_user(final_config)
+        return config if all(config.values()) else None
 
     def get_user_command(self):
         """
