@@ -3,9 +3,8 @@ import json
 import base64
 import time
 import datetime
-from PyQt5.QtCore import QObject
 
-class Network_Handler(QObject):
+class Network_Handler:
     """
     Handler for network communications including server connections
     and data transmission for online services.

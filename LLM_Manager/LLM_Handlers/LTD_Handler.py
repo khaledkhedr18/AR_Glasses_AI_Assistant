@@ -1,136 +1,94 @@
-from PyQt5.QtCore import QObject
 from fuzzywuzzy import fuzz
-from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
+from utils.logging import Logger
 
 
-class LTD_Handler(QObject):
+class LTD_Handler:
     """
-    This class handles the language and the tool detection
+    Handles language and tool detection without direct dependencies on other handlers.
     """
-    def __init__(self, audio_handler=None):
-        """
-        Initialize the DL_Handler.
 
-        Args:
-            audio_handler (AudioHandler, optional): An instance of AudioHandler.
-                If None, a new instance will be created.
-        """
-        super().__init__()
-        self.audio_handler = audio_handler or AudioHandler()
+    def __init__(self):
+        """Initialize the LTD_Handler."""
+        self.logger = Logger()
+        self.logger.info("Initializing LTD_Handler")
+
         self.supported_languages = {
             "english": "en",
             "arabic": "ar",
             "french": "fr"
         }
 
-    def get_lang1(self, model):
+    def detect_language_from_text(self, text, confidence_threshold=70):
         """
-        Prompts the user to specify the source language for translation.
-
-        The function asks the user to specify the source language by speaking
-        either "English", "Arabic", or "French". It uses fuzzy matching to interpret
-        the user's response and returns the corresponding language code ("en", "ar",
-        "fr") if a match is found with a confidence score above 70.
+        Detect language from text using fuzzy matching.
 
         Args:
-            model: The speech recognition model used to capture user input.
+            text (str): Text to analyze
+            confidence_threshold (int): Minimum score to consider match valid
 
         Returns:
-            str or None: The language code for the source language if a match is
-            found, otherwise None.
+            tuple: (language_code, confidence) or (None, 0) if no match
         """
-        self.audio_handler.speak("What is the source language? English, Arabic, or French?")
-        print("What is the source language? (English/Arabic/French)")
+        if not text or not text.strip():
+            return None, 0
 
-        return self._get_language_selection(model)
+        # Calculate fuzzy match scores for each supported language
+        scores = {}
+        for language_name, language_code in self.supported_languages.items():
+            scores[language_code] = fuzz.partial_ratio(text.lower(), language_name.lower())
 
-    def get_lang2(self, model):
+        # Find the best match
+        best_match = max(scores, key=scores.get)
+        best_score = scores[best_match]
+
+        if best_score > confidence_threshold:
+            self.logger.info(f"Language detected: {best_match} (confidence: {best_score}%)")
+            return best_match, best_score
+        else:
+            return None, 0
+
+    def detect_tool_from_text(self, text):
         """
-        Prompts the user to specify the target language for translation.
-
-        Uses the same logic as get_lang1 but for the target language.
+        Detect whether the user wants speech or image processing.
 
         Args:
-            model: The speech recognition model used to capture user input.
+            text (str): User input text
 
         Returns:
-            str or None: The language code for the target language if a match is
-            found, otherwise None.
+            str or None: "speech", "image", or None if undetermined
         """
-        self.audio_handler.speak("What is the target language? English, Arabic, or French?")
-        print("What is the target language? (English/Arabic/French)")
+        if not text:
+            return None
 
-        return self._get_language_selection(model)
+        text_lower = text.lower()
 
-    def _get_language_selection(self, model, max_attempts=5, confidence_threshold=70):
-        """
-        Helper method to handle language selection with fuzzy matching.
+        # Check for speech indicators
+        if any(word in text_lower for word in ["speech", "voice", "audio", "speak", "talk", "one", "1"]):
+            return "speech"
 
-        Args:
-            model: The speech recognition model to use
-            max_attempts (int): Maximum number of attempts to recognize language
-            confidence_threshold (int): Minimum score to consider a match valid
+        # Check for image indicators
+        elif any(word in text_lower for word in ["image", "picture", "photo", "text", "read", "scan", "two", "2"]):
+            return "image"
 
-        Returns:
-            str or None: Language code if match found, otherwise None
-        """
-        for attempt in range(max_attempts):
-            user_input = self.audio_handler.get_audio(model)
-            if not user_input or not user_input.strip():
-                self.audio_handler.speak("I didn't hear you. Please try again.")
-                continue
-
-            print(f"Detected speech: '{user_input}'")
-
-            # Calculate fuzzy match scores for each supported language
-            scores = {}
-            for language_name, language_code in self.supported_languages.items():
-                scores[language_code] = fuzz.partial_ratio(user_input.lower(), language_name.lower())
-
-            # Find the best match
-            best_match = max(scores, key=scores.get)
-            best_score = scores[best_match]
-
-            if best_score > confidence_threshold:
-                print(f"Language detected: {best_match} (confidence: {best_score}%)")
-                return best_match
-            else:
-                self.audio_handler.speak("I'm not sure which language you mean. Please say English, Arabic, or French.")
-
-        self.audio_handler.speak("I couldn't understand your language selection. Please try again later.")
+        # Unable to determine
         return None
 
-    def tool_detection(self, model):
+    def get_language_code(self, language_name):
         """
-        Determines whether the user wants to use speech or image translation.
+        Get language code from language name.
 
         Args:
-            model: The speech recognition model to use
+            language_name (str): Language name
 
         Returns:
-            str or None: "speech", "image", or None if selection couldn't be determined
+            str or None: Language code or None if not supported
         """
-        self.audio_handler.speak("Do you want to translate speech or image?")
-        print("Speech or image input?")
+        if not language_name:
+            return None
 
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            user_input = self.audio_handler.get_audio(model)
-            if not user_input:
-                continue
+        # Check if it's already a code
+        if language_name.lower() in ["en", "ar", "fr"]:
+            return language_name.lower()
 
-            user_input = user_input.lower()
-
-            # Check for speech indicators
-            if any(word in user_input for word in ["speech", "voice", "audio", "speak", "one", "1"]):
-                return "speech"
-
-            # Check for image indicators
-            elif any(word in user_input for word in ["image", "picture", "photo", "text", "two", "2"]):
-                return "image"
-
-            # If we get here, the input wasn't clear
-            self.audio_handler.speak("Please say 'speech' or 'image'.")
-
-        self.audio_handler.speak("I couldn't determine your selection. Please try again.")
-        return None
+        # Try to match with supported languages
+        return self.supported_languages.get(language_name.lower(), None)

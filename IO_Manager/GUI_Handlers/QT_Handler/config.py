@@ -49,3 +49,31 @@ OVERLAY_WIDGET_CONFIGS = {
         "default_text": "Assistant: Ready"
     }
 }
+ # 20
+user_config = {
+    "source_language": "english",
+    "target_language": "arabic",
+    "tool_detection": "image",
+    "if_online": True,
+}
+
+
+
+
+
+user_commands = {
+    "exit_command": {
+        "quit", "exit", "stop", "close", "terminate", "shutdown"
+    },
+    "wake_word": {
+        "hey david", "hi david", "hello david", "david", "assistant"
+    },
+    "hide_widget_command": {
+        "hide", "minimize", "collapse", "conceal", "shrink"
+    },
+    "show_widget_command": {
+        "show", "expand", "reveal", "display", "enlarge"
+    },
+}
+
+

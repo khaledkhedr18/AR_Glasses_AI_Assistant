@@ -2,27 +2,18 @@ import os
 import cv2
 import numpy as np
 import pytesseract
-from PyQt5.QtCore import QObject
-from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
+from utils.logging import Logger
 
-class OCR_Handler(QObject):
+class OCR_Handler:
     """
     Handler class for Optical Character Recognition operations.
-
-    This class provides methods for processing images and extracting text,
-    with support for multiple languages and image preprocessing techniques.
+    Works independently of other handlers, communicating only through LLM_Manager.
     """
 
-    def __init__(self, audio_handler=None):
-        """
-        Initialize the OCR_Handler.
-
-        Args:
-            audio_handler (AudioHandler, optional): An instance of AudioHandler for speech feedback.
-                If None, a new instance will be created.
-        """
-        super().__init__()
-        self.audio_handler = audio_handler or AudioHandler()
+    def __init__(self):
+        """Initialize the OCR_Handler."""
+        self.logger = Logger()
+        self.logger.info("Initializing OCR_Handler")
 
         # Configure Tesseract path if needed (especially for Windows)
         if os.name == 'nt':  # Windows
@@ -51,19 +42,19 @@ class OCR_Handler(QObject):
         Recognize text in an image using Tesseract OCR with advanced preprocessing.
 
         Args:
-            image_path (str): The path to the image file.
-            lang (str, optional): The language of the text in the image. Defaults to "eng".
-            save_processed (bool, optional): Whether to save the processed image. Defaults to True.
-            mode (str, optional): OCR mode - "default", "document", "table", or "single_line". Defaults to "default".
+            image_path (str): Path to the image file
+            lang (str): The language code for OCR
+            save_processed (bool): Whether to save the processed image
+            mode (str): OCR mode (default, document, etc.)
 
         Returns:
-            str: The recognized text if successful, otherwise an empty string.
+            str: Recognized text or empty string if failed
         """
         try:
             # Load and preprocess image
             img = cv2.imread(image_path)
             if img is None:
-                self.audio_handler.speak("Failed to open image file")
+                self.logger.error(f"Failed to open image file: {image_path}")
                 return ""
 
             # Process image based on preprocessing level
@@ -73,7 +64,7 @@ class OCR_Handler(QObject):
             if save_processed:
                 processed_path = os.path.splitext(image_path)[0] + "_processed.jpg"
                 cv2.imwrite(processed_path, processed)
-                print(f"Saved preprocessed image to: {processed_path}")
+                self.logger.debug(f"Saved preprocessed image to: {processed_path}")
 
             # Get OCR config
             custom_config = self.ocr_configs.get(mode, self.ocr_configs["default"])
@@ -83,18 +74,17 @@ class OCR_Handler(QObject):
             text = raw_text.strip()
 
             if not text:
-                self.audio_handler.speak("No text found in the image")
+                self.logger.warning("No text found in the image")
 
             return text
 
         except Exception as e:
-            self.audio_handler.speak(f"OCR processing error")
-            print(f"OCR Error: {e}")
+            self.logger.error(f"OCR Error: {e}")
             return ""
 
     def _preprocess_image(self, img):
         """
-        Preprocess image for better OCR results based on current preprocessing level.
+        Preprocess image for better OCR results.
 
         Args:
             img: OpenCV image object
@@ -151,7 +141,7 @@ class OCR_Handler(QObject):
 
         Args:
             image_path (str): Path to the image file
-            language_code (str): Two-letter language code ("en", "ar", "fr")
+            language_code (str): Two-letter language code
 
         Returns:
             str: Recognized text
@@ -164,44 +154,12 @@ class OCR_Handler(QObject):
 
     def get_tesseract_language(self, language_code):
         """
-        Convert a two-letter language code to the Tesseract language format.
+        Convert a language code to Tesseract format.
 
         Args:
-            language_code (str): Two-letter language code ("en", "ar", "fr")
+            language_code (str): Two-letter language code
 
         Returns:
-            str: Three-letter Tesseract language code ("eng", "ara", "fra")
+            str: Three-letter Tesseract language code
         """
         return self.tesseract_languages.get(language_code, "eng")
-
-    def capture_and_recognize(self, camera_widget, language_code, max_attempts=3):
-        """
-        Capture an image from camera and recognize text in one operation.
-
-        Args:
-            camera_widget: Camera widget to capture image from
-            language_code (str): Two-letter language code
-            max_attempts (int): Maximum number of capture attempts
-
-        Returns:
-            tuple: (success (bool), text (str))
-        """
-        # Try to capture image
-        for attempt in range(max_attempts):
-            self.audio_handler.speak(f"Capturing image, attempt {attempt + 1}")
-            filename = camera_widget.capture_image(f"ocr_capture_{attempt}.jpg")
-
-            if not filename or not os.path.exists(filename):
-                continue
-
-            # Get tesseract language and perform OCR
-            tesseract_lang = self.get_tesseract_language(language_code)
-            text = self.recognize_text(filename, lang=tesseract_lang)
-
-            if text:
-                return True, text
-
-            self.audio_handler.speak("No text found, trying again")
-
-        self.audio_handler.speak("Could not detect text after multiple attempts")
-        return False, ""

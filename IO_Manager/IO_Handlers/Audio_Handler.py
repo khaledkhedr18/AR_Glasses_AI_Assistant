@@ -1,4 +1,3 @@
-from PyQt5.QtCore import QThread, pyqtSignal
 import subprocess
 import sounddevice as sd
 import numpy as np
