@@ -1,9 +1,9 @@
 import time
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QWidget, QVBoxLayout)
-from PyQt5.QtGui import QPixmap
-from IO_Manager.GUI_Handlers.QT_Handler.QtCameraWidget import QtCameraWidget
-from IO_Manager.GUI_Handlers.QT_Handler.config import OVERLAY_WIDGET_CONFIGS
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QWidget, QVBoxLayout, QSizePolicy)
+from PyQt5.QtGui import QPixmap, QPainter, QImage
+import cv2
+from utils.config import OVERLAY_WIDGET_CONFIGS
 from utils.logging import Logger
 from utils.WorkerThread import WorkerThread
 
@@ -43,7 +43,14 @@ class Qt_Handler:
             # Create Qt application instance if not already created
             self.app = QApplication([]) if not QApplication.instance() else QApplication.instance()
             self.main_window = None
+            self.io_manager = None  # Will be set by main application
+
+            # Camera display properties
             self.camera_widget = None
+            self.camera_pixmap = None
+            self.frame_rate = 30
+            self.camera_timer = None
+
             self.signals = CommunicationSignals()
             self.worker_threads = []
             self.is_fullscreen = False
@@ -57,6 +64,11 @@ class Qt_Handler:
         except Exception as e:
             self.logger.log_error_with_traceback("Qt_Handler initialization failed", e)
             raise
+
+    def set_io_manager(self, io_manager):
+        """Set the IO_Manager reference"""
+        self.io_manager = io_manager
+        self.logger.info("IO_Manager reference set in Qt_Handler")
 
     def create_window(self, title="AR Glasses Assistant", fullscreen=True):
         """
@@ -81,10 +93,35 @@ class Qt_Handler:
             self.main_window.setCentralWidget(central_widget)
             main_layout = QVBoxLayout(central_widget)
 
-            # Create camera widget using QtCameraWidget
+            # Create camera widget (now directly in Qt_Handler instead of using QtCameraWidget)
             self.logger.debug("Initializing camera widget")
-            self.camera_widget = QtCameraWidget()
+            self.camera_widget = QWidget()
+            self.camera_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.camera_pixmap = QPixmap()
+            self.camera_pixmap.fill(Qt.black)  # Initial black screen
+
+            # Set up custom paint event for the camera widget
+            class CameraDisplay(QWidget):
+                def __init__(self, parent, pixmap_ref):
+                    super().__init__(parent)
+                    self.pixmap_ref = pixmap_ref
+                    self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+                def paintEvent(self, event):
+                    if not self.pixmap_ref or self.pixmap_ref.isNull():
+                        return
+
+                    painter = QPainter(self)
+                    painter.drawPixmap(0, 0, self.width(), self.height(), self.pixmap_ref)
+
+                def resizeEvent(self, event):
+                    self.update()
+                    super().resizeEvent(event)
+
+            self.camera_widget = CameraDisplay(None, self.camera_pixmap)
             main_layout.addWidget(self.camera_widget)
+
+            # We remove the camera timer here - IO_Manager will control frame updates
 
             # Set window properties
             self.is_fullscreen = fullscreen
@@ -105,6 +142,70 @@ class Qt_Handler:
         except Exception as e:
             self.logger.log_error_with_traceback("Error creating main window", e)
             return None
+
+    def update_camera_frame(self, frame):
+        """
+        Update the camera frame display with the provided frame.
+        This method is called by IO_Manager with frames from Camera_Handler.
+
+        Args:
+            frame: OpenCV image frame to display
+        """
+        try:
+            if frame is None:
+                self.logger.warning("Received empty frame for display")
+                return
+
+            # Convert color space if needed
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                # Assume BGR format from OpenCV
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            else:
+                rgb_frame = frame
+
+            # Resize to widget dimensions
+            height, width = rgb_frame.shape[:2]
+            if self.camera_widget and self.camera_widget.width() > 0 and self.camera_widget.height() > 0:
+                resized_frame = cv2.resize(
+                    rgb_frame,
+                    (self.camera_widget.width(), self.camera_widget.height()),
+                    interpolation=cv2.INTER_LANCZOS4
+                )
+
+                # Create QImage and QPixmap
+                height, width, channel = resized_frame.shape
+                bytes_per_line = 3 * width
+                image = QImage(
+                    resized_frame.data,
+                    width,
+                    height,
+                    bytes_per_line,
+                    QImage.Format_RGB888
+                )
+                self.camera_pixmap = QPixmap.fromImage(image)
+
+                # Update the camera widget
+                if self.camera_widget:
+                    self.camera_widget.pixmap_ref = self.camera_pixmap
+                    self.camera_widget.update()
+        except Exception as e:
+            self.logger.error(f"Error updating camera frame: {e}")
+
+    def capture_image(self, filename=None):
+        """
+        Capture an image using IO_Manager
+
+        Args:
+            filename (str, optional): Path to save the image
+
+        Returns:
+            str: Path to saved image or None if failed
+        """
+        if not self.io_manager:
+            self.logger.warning("Cannot capture image: IO_Manager not set")
+            return None
+
+        return self.io_manager.capture_image(filename)
 
     def create_overlay_widget(self, widget_type, config=None):
         """
@@ -225,6 +326,16 @@ class Qt_Handler:
             "ai_response": self.ai_response_label if hasattr(self, "ai_response_label") else None
         }
 
+    def check_status(self):
+        """Default status check implementation - override if needed"""
+        # This would typically call into a network service to check connectivity
+        # For now, we'll just keep the status as is
+        pass
+
+    def update_status(self, status_text, is_online=None):
+        """Alias for _update_network_status to maintain compatibility"""
+        return self._update_network_status(status_text, is_online)
+
     def _update_network_status(self, status_text, is_online=None):
         """
         Update the status display
@@ -251,6 +362,10 @@ class Qt_Handler:
             self.logger.error(f"Failed to update status: {str(e)}")
             return False
 
+    def update_user_speech(self, text):
+        """Alias for _update_user_speech to maintain compatibility"""
+        return self._update_user_speech(text)
+
     def _update_user_speech(self, text):
         """Update the user speech display with the given text"""
         self.logger.debug(f"Updating user speech: '{text}'")
@@ -265,6 +380,10 @@ class Qt_Handler:
         except Exception as e:
             self.logger.error(f"Failed to update user speech: {str(e)}")
             return False
+
+    def update_ai_response(self, text):
+        """Alias for _update_ai_response to maintain compatibility"""
+        return self._update_ai_response(text)
 
     def _update_ai_response(self, text):
         """Update the AI response display with the given text"""
@@ -320,6 +439,10 @@ class Qt_Handler:
             self.logger.error(f"Failed to update widget text: {str(e)}")
             return False
 
+    def hide_widget(self, widget_instance):
+        """Alias for hide_overlay_widget to maintain compatibility"""
+        return self.hide_overlay_widget(widget_instance)
+
     def hide_overlay_widget(self, widget_instance):
         """
         Hide the specified widget
@@ -340,6 +463,10 @@ class Qt_Handler:
         except Exception as e:
             self.logger.error(f"Failed to hide widget: {str(e)}")
             return False
+
+    def hide_all_widgets(self):
+        """Alias for hide_all_overlay_widgets to maintain compatibility"""
+        return self.hide_all_overlay_widgets()
 
     def hide_all_overlay_widgets(self):
         """
@@ -533,6 +660,11 @@ class Qt_Handler:
         start_time = time.time()
 
         try:
+            # Stop camera update timer
+            if self.camera_timer and self.camera_timer.isActive():
+                self.logger.debug("Stopping camera update timer")
+                self.camera_timer.stop()
+
             # Stop all worker threads
             worker_count = len(self.worker_threads)
             self.logger.debug(f"Stopping {worker_count} worker threads")
@@ -543,12 +675,7 @@ class Qt_Handler:
                 except Exception as e:
                     self.logger.warning(f"Error stopping worker thread: {str(e)}")
 
-            # Clean up camera if it exists
-            if self.camera_widget:
-                self.logger.debug("Cleaning up camera widget")
-                self.camera_widget.cleanup()
-
-            # Stop timers
+            # Stop status check timer
             if hasattr(self, 'status_check_timer'):
                 self.logger.debug("Stopping status check timer")
                 self.status_check_timer.stop()
@@ -559,3 +686,69 @@ class Qt_Handler:
 
         except Exception as e:
             self.logger.log_error_with_traceback("Error during Qt_Handler cleanup", e)
+
+    # Add this new method to the Qt_Handler class
+    def delete_overlay_widget(self, widget_instance):
+        """
+        Permanently delete an overlay widget from the application.
+
+        Args:
+            widget_instance: The widget to delete
+
+        Returns:
+            bool: True if successfully deleted, False otherwise
+        """
+        if not widget_instance:
+            self.logger.warning("Cannot delete widget: widget_instance is None")
+            return False
+
+        try:
+            # Find the widget in our dictionary
+            widget_id_to_delete = None
+            widget_type = None
+
+            for widget_id, info in self.overlay_widgets.items():
+                if info["widget"] == widget_instance:
+                    widget_id_to_delete = widget_id
+                    widget_type = info["type"]
+                    break
+
+            if not widget_id_to_delete:
+                self.logger.warning("Widget not found in overlay_widgets dictionary")
+                return False
+
+            # Disconnect any signals associated with the widget
+            if widget_type == "ai_response" and hasattr(self, 'signals'):
+                try:
+                    self.signals.update_ai_speech.disconnect()
+                except TypeError:
+                    pass  # Signal might not be connected
+            elif widget_type == "user_speech" and hasattr(self, 'signals'):
+                try:
+                    self.signals.update_user_speech.disconnect()
+                except TypeError:
+                    pass  # Signal might not be connected
+
+            # Remove specific widget references
+            if widget_type == "status" and hasattr(self, 'status_label') and self.status_label == widget_instance:
+                self.status_label = None
+            elif widget_type == "user_speech" and hasattr(self, 'user_speech_label') and self.user_speech_label == widget_instance:
+                self.user_speech_label = None
+            elif widget_type == "ai_response" and hasattr(self, 'ai_response_label') and self.ai_response_label == widget_instance:
+                self.ai_response_label = None
+
+            # Hide the widget before deletion
+            widget_instance.hide()
+
+            # Remove from main dictionary
+            del self.overlay_widgets[widget_id_to_delete]
+
+            # Schedule the widget for deletion
+            widget_instance.deleteLater()
+
+            self.logger.info(f"Successfully deleted {widget_type} widget")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to delete widget: {str(e)}")
+            return False

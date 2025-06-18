@@ -267,3 +267,28 @@ class GUI_Handler:
         """Clean up resources before exit"""
         if self.gui_handler:
             self.gui_handler.cleanup()
+
+    def update_camera_frame(self, frame):
+        """
+        Update the camera frame in the GUI
+
+        Args:
+            frame: The camera frame to display
+        """
+        if self.gui_handler:
+            return self.gui_handler.update_camera_frame(frame)
+        return False
+
+    def delete_overlay_widget(self, widget_instance):
+        """
+        Permanently delete an overlay widget
+
+        Args:
+            widget_instance: The widget to delete
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.gui_handler and hasattr(self.gui_handler, 'delete_overlay_widget'):
+            return self.gui_handler.delete_overlay_widget(widget_instance)
+        return False

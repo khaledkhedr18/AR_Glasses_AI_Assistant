@@ -1,82 +1,58 @@
 import threading
 import cv2
-import numpy as np
-import time
+from picamera2 import Picamera2
+import libcamera
+import sys
 import os
-from utils.logging import Logger
 
-# Conditionally import PiCamera or fallback to OpenCV
-try:
-    from picamera2 import Picamera2
-    import libcamera
-    PICAMERA_AVAILABLE = True
-except ImportError:
-    PICAMERA_AVAILABLE = False
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+
+from utils.config import CAMERA_CONFIG
+from utils.logging import Logger
+import os
+
 
 class CameraHandler:
-    """
-    Framework-agnostic camera handling class for image capture and processing.
-    """
-
     def __init__(self):
-        """Initialize the Camera Handler."""
+        """
+        Initialize the Camera
+        """
         self.logger = Logger()
-        self.logger.info("Initializing Camera Handler")
-
         self.camera_lock = threading.Lock()
-        self.capture_width = 1920
-        self.capture_height = 1080
         self.frame_buffer = None
-        self.last_frame_time = 0
-        self.frame_rate = 30
-        self.is_recording = False
-        self.recording_thread = None
         self.picam2 = None
+        self.capture_width = CAMERA_CONFIG['CAPTURE_WIDTH']
+        self.capture_height = CAMERA_CONFIG['CAPTURE_HEIGHT']
+        self.quality = CAMERA_CONFIG['IMAGE_QUALITY']
+        self.save_dir = CAMERA_CONFIG['SAVE_DIRECTORY']
+        self.saved_image_name = CAMERA_CONFIG['IMAGE_FILENAME']
+        self.image_save_path = None
+        self.__initialize_camera()
 
-        # Initialize camera if available
-        if PICAMERA_AVAILABLE:
-            self.initialize_camera()
+    def capture_and_save_image(self):
+        """
+        Capture an image from the camera and save it to a static path.
+        Returns: str or None: The saved image path if successful, None if failed
+        """
 
-    def initialize_camera(self):
-        """Initialize the camera with appropriate settings."""
-        try:
-            if self.picam2 is None and PICAMERA_AVAILABLE:
-                self.picam2 = Picamera2()
+        # Ensure the save directory exists
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
 
-                # Use sensor resolution and proper color format
-                config = self.picam2.create_preview_configuration(
-                    main={
-                        "size": (self.capture_width, self.capture_height),
-                        "format": "RGB888"
-                    },
-                    controls={
-                        "AwbEnable": True,
-                        "AeEnable": True,
-                        "ExposureTime": 10000,
-                        "AnalogueGain": 1.0,
-                        "FrameDurationLimits": (33333, 33333)  # 30fps
-                    },
-                    transform=libcamera.Transform(hflip=1, vflip=1)
-                )
-                self.picam2.configure(config)
+        # Use os.path.join for cross-platform compatibility
+        self.image_save_path = os.path.join(self.save_dir, self.saved_image_name)
 
-                # Set autofocus controls
-                controls = {"AfMode": libcamera.controls.AfModeEnum.Continuous}
-                self.picam2.set_controls(controls)
-                self.picam2.start()
-
-                # Get actual capture dimensions
-                self.capture_width = config["main"]["size"][0]
-                self.capture_height = config["main"]["size"][1]
-
-                self.logger.info(f"Camera initialized: {self.capture_width}x{self.capture_height}")
-                return True
-
-        except Exception as e:
-            self.logger.error(f"Camera initialization error: {str(e)}")
-            return False
-
-        return False
+        with self.camera_lock:
+            try:
+                # Capture full resolution image
+                buffer = self.picam2.capture_array("main")
+                # Save the image with specified quality
+                cv2.imwrite(self.image_save_path, buffer, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+                self.logger.info(f"Image saved as {self.image_save_path}")
+                return self.image_save_path
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error capturing image", e)
+                return None
 
     def capture_frame(self):
         """Capture a single frame from the camera."""
@@ -88,102 +64,23 @@ class CameraHandler:
                     return frame
                 return None
             except Exception as e:
-                self.logger.error(f"Error capturing frame: {str(e)}")
+                self.logger.log_error_with_traceback("Error capturing frame", e)
                 return None
 
-    def capture_image(self, filename=None):
+    def set_camera_configurations(self, exposure=None, gain=None, focus_mode=None):
         """
-        Capture an image and save it to a file.
+        set camera configurations like exposure, gain and focus mode.
 
         Args:
-            filename (str, optional): The filename to save the image to
-
-        Returns:
-            str or None: The filename if the capture is successful, or None otherwise
-        """
-        with self.camera_lock:
-            try:
-                if not self.picam2:
-                    self.logger.warning("Camera not initialized")
-                    return None
-
-                # Generate filename if not provided
-                if not filename:
-                    os.makedirs("Saved_Images", exist_ok=True)
-                    filename = f"Saved_Images/capture_{int(time.time())}.jpg"
-
-                # Capture full resolution image
-                buffer = self.picam2.capture_array("main")
-                cv2.imwrite(filename, buffer, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                self.logger.info(f"Image saved: {filename}")
-
-                return filename
-
-            except Exception as e:
-                self.logger.error(f"Error capturing image: {str(e)}")
-                return None
-
-    def process_image(self, image, processing_level="medium"):
-        """
-        Process an image for better text recognition.
-
-        Args:
-            image: OpenCV image or path to image
-            processing_level (str): "low", "medium", or "high"
-
-        Returns:
-            numpy.ndarray: Processed image
-        """
-        # Load image if path is provided
-        if isinstance(image, str):
-            img = cv2.imread(image)
-        else:
-            img = image
-
-        if img is None:
-            self.logger.error("Failed to load image for processing")
-            return None
-
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        if processing_level == "low":
-            return gray
-
-        # Medium processing (default)
-        denoised = cv2.fastNlMeansDenoising(gray, h=10)
-        _, thresh = cv2.threshold(denoised, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        if processing_level == "medium":
-            return thresh
-
-        # High processing
-        if processing_level == "high":
-            processed = cv2.dilate(thresh, np.ones((1, 1), np.uint8), iterations=1)
-            processed = cv2.erode(processed, np.ones((1, 1), np.uint8), iterations=1)
-
-            # Edge enhancement
-            edges = cv2.Canny(processed, 50, 150)
-            processed = cv2.addWeighted(processed, 0.8, edges, 0.2, 0)
-
-            return processed
-
-        # Default fallback
-        return thresh
-
-    def set_camera_parameters(self, exposure=None, gain=None, focus_mode=None):
-        """
-        Set camera parameters like exposure, gain and focus mode.
-
-        Args:
-            exposure (int, optional): Exposure time in microseconds
-            gain (float, optional): Analog gain value
-            focus_mode (str, optional): Focus mode (auto, continuous, manual)
+            exposure (int, optional): Exposure time in microseconds if not passed the default value will be used
+            gain (float, optional): Analog gain value if not passed the default value will be used
+            focus_mode (str, optional): Focus mode (auto, continuous, manual) if not passed the default value of hardware will be used
 
         Returns:
             bool: True if parameters were set successfully, False otherwise
         """
         if not self.picam2:
+            self.logger.warning("Camera not initialized, cannot set configurations")
             return False
 
         try:
@@ -204,101 +101,64 @@ class CameraHandler:
                     controls["AfMode"] = libcamera.controls.AfModeEnum.Manual
 
             if controls:
+                self.logger.info("Camera configurations updated successfully")
                 self.picam2.set_controls(controls)
             return True
 
         except Exception as e:
-            self.logger.error(f"Error setting camera parameters: {str(e)}")
+            self.logger.log_error_with_traceback("Error setting camera parameters", e)
             return False
 
-    def start_recording(self, output_file="video.mp4", fps=30, duration=None):
+    def __initialize_camera(self):
         """
-        Start recording video from the camera.
+        Initialize the camera with native sensor resolution and proper color format.
 
-        Args:
-            output_file (str): Path to save the video
-            fps (int): Frames per second
-            duration (float, optional): Recording duration in seconds
+        This method configures the camera with the native sensor resolution and
+        RGB888 color format. It also sets the autofocus mode to continuous and
+        starts the camera. The capture dimensions are extracted from the
+        configuration and stored as instance variables.
 
-        Returns:
-            bool: True if recording started successfully, False otherwise
+        If there is an error during initialization, the `pixmap` is filled with
+        red color to indicate the error.
         """
-        if self.is_recording:
-            self.logger.warning("Already recording")
-            return False
-
         try:
-            # Get camera resolution
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            self.video_writer = cv2.VideoWriter(
-                output_file,
-                fourcc,
-                fps,
-                (self.capture_width, self.capture_height)
-            )
+            if self.picam2 is None:
+                self.picam2 = Picamera2()
+                config = self.picam2.create_preview_configuration(
+                    main={
+                        "size": (self.capture_width, self.capture_height),
+                        "format": CAMERA_CONFIG['COLOR_FORMAT']
+                    },
+                    controls={
+                        "AwbEnable": CAMERA_CONFIG['AWB_ENABLE'],
+                        "AeEnable": CAMERA_CONFIG['AE_ENABLE'],
+                        "ExposureTime": CAMERA_CONFIG['DEFAULT_EXPOSURE'],
+                        "AnalogueGain": CAMERA_CONFIG['DEFAULT_GAIN'],
+                        "FrameDurationLimits": (CAMERA_CONFIG['FRAME_DURATION'],
+                                                CAMERA_CONFIG['FRAME_DURATION'])
+                    },
+                    transform=libcamera.Transform(
+                        hflip=CAMERA_CONFIG['HFLIP'],
+                        vflip=CAMERA_CONFIG['VFLIP']
+                    )
+                )
+                self.picam2.configure(config)
 
-            self.is_recording = True
-            self.recording_stop_event = threading.Event()
+                # Set default focus mode
+                mode = CAMERA_CONFIG['DEFAULT_FOCUS_MODE']
+                if mode == 'continuous':
+                    focus_mode = libcamera.controls.AfModeEnum.Continuous
+                elif mode == 'auto':
+                    focus_mode = libcamera.controls.AfModeEnum.Auto
+                else:
+                    focus_mode = libcamera.controls.AfModeEnum.Manual
 
-            def record_thread_func():
-                start_time = time.time()
-                while self.is_recording and not self.recording_stop_event.is_set():
-                    if duration and time.time() - start_time > duration:
-                        break
+                self.picam2.set_controls({"AfMode": focus_mode})
+                self.picam2.start()
 
-                    frame = self.capture_frame()
-                    if frame is not None:
-                        self.video_writer.write(frame)
-                    time.sleep(1/fps)
-
-                # Clean up
-                self.video_writer.release()
-                self.is_recording = False
-
-            # Start recording in a separate thread
-            self.recording_thread = threading.Thread(target=record_thread_func)
-            self.recording_thread.daemon = True
-            self.recording_thread.start()
-
-            self.logger.info(f"Started recording to {output_file}")
-            return True
+                self.capture_width = config["main"]["size"][0]
+                self.capture_height = config["main"]["size"][1]
+                self.logger.info("Camera initialized successfully")
 
         except Exception as e:
-            self.logger.error(f"Error starting recording: {str(e)}")
-            self.is_recording = False
-            return False
-
-    def stop_recording(self):
-        """
-        Stop current video recording.
-
-        Returns:
-            bool: True if recording was stopped, False if no recording in progress
-        """
-        if not self.is_recording:
-            return False
-
-        self.recording_stop_event.set()
-        if self.recording_thread:
-            self.recording_thread.join(timeout=2.0)
-
-        self.logger.info("Recording stopped")
-        return True
-
-    def cleanup(self):
-        """Release camera resources."""
-        try:
-            # Stop recording if in progress
-            if self.is_recording:
-                self.stop_recording()
-
-            # Close camera
-            if self.picam2:
-                self.picam2.close()
-                self.picam2 = None
-
-            self.logger.info("Camera resources released")
-            return True
-        except Exception as e:
-            self.logger.error(f"Error during camera cleanup: {str(e)}")
-            return False
+            self.logger.log_error_with_traceback("Camera Initialization Error", e)
