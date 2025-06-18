@@ -43,6 +43,7 @@ IO_CONFIG = {
     # GUI window names
     'CAMERA_WINDOW_NAME': "camera window",
     'AI_WINDOW_NAME': "ai window",
+    'User_INPUT_WINDOW_NAME': "user input window",
 
     # Language settings
     'SUPPORTED_LANGUAGES': {

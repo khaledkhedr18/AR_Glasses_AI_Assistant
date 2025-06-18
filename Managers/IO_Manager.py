@@ -13,10 +13,10 @@ class IOManager:
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
+        self.recognizer = SpeechRecognizer(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
         self.logger = Logger()
         self.wake_word = IO_CONFIG['WAKE_WORD']
         self.supported_languages = IO_CONFIG['SUPPORTED_LANGUAGES']
-        self.recognizer = SpeechRecognizer(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None
@@ -218,37 +218,76 @@ class IOManager:
 
     def __record_with_timer(self, timeout_seconds):
         """
-        Starts recording and sets a timer to stop after timeout_seconds
+        Records audio with timer in a separate thread.
+        Ensures proper thread management and cleanup.
+
         Args:
-            timeout_seconds (int): Seconds to record
+            timeout_seconds (int): Duration to record in seconds
         Returns:
-            str: Path to the recorded audio file
+            recorded_audio: The recorded audio data or None if failed
         """
         with self.audio_lock:
-            if not self.audio_running:
-                self.logger.info(f"Starting timed recording for {timeout_seconds} seconds")
-                self.audio_running = True
-                recorded_event = threading.Event()
-                recorded_audio = [None]  # Using list as a mutable container
+            # Check if recording thread already exists and is running
+            if hasattr(self, 'recording_thread') and self.recording_thread and self.recording_thread.is_alive():
+                self.logger.warning("Audio recording thread already running")
+                return None
 
-                def stop_recording_timer():
+            if self.audio_running:
+                self.logger.warning("Audio recording already in progress")
+                return None
+
+            recorded_audio = [None]  # Using list as a mutable container
+            recording_complete = threading.Event()
+
+            def recording_task():
+                try:
+                    self.logger.info(f"Starting audio recording for {timeout_seconds} seconds")
+                    self.audio.start_recording()
+
+                    # Wait for the specified duration
+                    if recording_complete.wait(timeout=timeout_seconds):
+                        self.logger.info("Recording stopped before timeout")
+                    else:
+                        self.logger.info("Recording completed after timeout")
+
+                    # Capture the recorded audio
                     recorded_audio[0] = self.audio.stop_recording()
-                    recorded_event.set()
 
-                self.audio.start_recording()
-                timer = threading.Timer(timeout_seconds, stop_recording_timer)
-                timer.start()
+                except Exception as e:
+                    self.logger.log_error_with_traceback("Error during audio recording", e)
+                    recorded_audio[0] = None
+                finally:
+                    self.audio_running = False
+                    if hasattr(self, 'recording_thread'):
+                        self.recording_thread = None
+                    recording_complete.set()
 
-                # Wait for recording to complete
-                recorded_event.wait(timeout=timeout_seconds + 1)  # Add 1 second buffer
+            try:
+                self.audio_running = True
+                self.recording_thread = threading.Thread(target=recording_task)
+                self.recording_thread.daemon = True
+                self.recording_thread.start()
 
-                # Cancel timer if it hasn't fired yet
-                if timer.is_alive():
-                    timer.cancel()
+                # Wait for the recording to complete with a small buffer time
+                self.recording_thread.join(timeout=timeout_seconds + 1)
 
-                self.logger.info("Timed recording completed")
-                self.audio_running = False
+                # Check if thread is still alive after timeout
+                if self.recording_thread and self.recording_thread.is_alive():
+                    self.logger.warning("Recording thread exceeded timeout, forcing stop")
+                    recording_complete.set()
+                    self.recording_thread.join(timeout=1)
+                    if self.audio_running:
+                        self.audio.stop_recording()
+                        self.audio_running = False
+
                 return recorded_audio[0]
+
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error managing recording thread", e)
+                if self.audio_running:
+                    self.audio.stop_recording()
+                    self.audio_running = False
+                return None
 
     def __stream_camera(self):
         """Private method to handle continuous camera streaming"""
