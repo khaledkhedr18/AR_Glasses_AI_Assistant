@@ -5,10 +5,10 @@ LLM_Manager/
 Network_Manager/
 /Handler/Audio_Handler.py
 /Handlers/GUI_Handler.py
-/Handlers/LD_Handler.py
-/Handlers/OCR_Handler.py
-/Handlers/Translation_Handler.py
-/Managers/LLM_Manager.py
+#/Handlers/LTD_Handler.py
+#/Handlers/OCR_Handler.py
+#/Handlers/Translation_Handler.py
+#/Managers/LLM_Manager.py
 /Managers/Network_Manager.py
 /Handlers/Audio_Handler.py
 /utils/WorkerThread.py

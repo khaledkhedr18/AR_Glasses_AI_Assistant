@@ -53,6 +53,11 @@ IO_CONFIG = {
         'french': 'fr',
     },
 
+    # Supported languages codes
+    'SUPPORTED_LANGUAGES_CODES': {
+        ["en", "ar", "fr"]
+    },
+
     'MAX_ATTEMPTS': 3,  # Max attempts for user input verification
 
     'MODE_KEYWORDS' : {
@@ -76,5 +81,9 @@ IO_CONFIG = {
 SERVICES_CONFIG = {
     # FuzzyWuzzy confidence_threshold
     'FUZZY_CONFIDENCE_THRESHOLD': 75,
+
+}
+
+LLM_CONFIG = {
 
 }
