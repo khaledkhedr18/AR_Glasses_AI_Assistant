@@ -2,7 +2,7 @@ from Handlers.GUI_Handler import GUIHandler
 from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
 from utils.Logging import Logger
-from utils.Config import IO_CONFIG
+from utils.Config import IO_CONFIG, LLM_CONFIG
 from utils.Services import Services
 import threading
 import time
@@ -16,7 +16,9 @@ class IOManager:
         self.Services = Services()
         self.logger = Logger()
         self.wake_word = IO_CONFIG['WAKE_WORD']
-        self.supported_languages = IO_CONFIG['SUPPORTED_LANGUAGES']
+        self.supported_languages = LLM_CONFIG['LANGUAGES_MAP']
+        self.mode_keywords = IO_CONFIG['MODE_KEYWORDS']
+        self.audio_record_timeout = IO_CONFIG['AUDIO_RECORD_TIMEOUT']
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None
@@ -121,12 +123,12 @@ class IOManager:
             self.logger.info(prompt)
             self.interact_with_user(prompt)
 
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
             text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if text:
-                return self.Services.verify_user_input(text, IO_CONFIG['WAKE_WORD']) is not None
+                return self.Services.verify_user_input(text, self.wake_word) is not None
 
             return False
 
@@ -137,12 +139,12 @@ class IOManager:
             self.logger.info(prompt)
             self.interact_with_user(prompt)
 
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
             text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if text:
-                return self.Services.verify_user_input(text, IO_CONFIG['SUPPORTED_LANGUAGES'])
+                return self.Services.verify_user_input(text, self.supported_languages)
             return None
 
         def get_translation_mode(prompt):
@@ -152,12 +154,12 @@ class IOManager:
             self.logger.info(prompt)
             self.interact_with_user(prompt)
 
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
             text = self.Services.recognize_text_from_speech(self.recorded_audio)
             if text:
-                return self.Services.verify_user_input(text, IO_CONFIG['MODE_KEYWORDS'])
+                return self.Services.verify_user_input(text, self.mode_keywords)
             return None
 
         def retry_input(input_func, prompt, attempt=1):
@@ -216,7 +218,7 @@ class IOManager:
 
         try:
             # Record audio for 5 seconds
-            self.recorded_audio = self.__record_with_timer(5)
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
 

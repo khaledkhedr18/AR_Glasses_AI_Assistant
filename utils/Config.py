@@ -1,5 +1,4 @@
 # config.py
-from utils.Services import Services
 
 # Camera Handler Configuration
 CAMERA_CONFIG = {
@@ -46,18 +45,6 @@ IO_CONFIG = {
     'AI_WINDOW_NAME': "ai window",
     'User_INPUT_WINDOW_NAME': "user input window",
 
-    # Language settings
-    'SUPPORTED_LANGUAGES': {
-        'arabic': 'ar',
-        'english': 'en',
-        'french': 'fr',
-    },
-
-    # Supported languages codes
-    'SUPPORTED_LANGUAGES_CODES': {
-        ["en", "ar", "fr"]
-    },
-
     'MAX_ATTEMPTS': 3,  # Max attempts for user input verification
 
     'MODE_KEYWORDS' : {
@@ -83,7 +70,49 @@ SERVICES_CONFIG = {
     'FUZZY_CONFIDENCE_THRESHOLD': 75,
 
 }
-
+# LLM Configuration
 LLM_CONFIG = {
+# Supported languages codes
+    'SUPPORTED_LANG_CODES': {
+        ["en", "ar", "fr"]
+    },
 
+# Supported languages mapping
+    'LANGUAGES_MAP': {
+        'arabic': 'ar',
+        'english': 'en',
+        'french': 'fr',
+    },
+
+# Supported  modes mapping
+    'PROMPTS_SUPPORTED' : {
+        'translate': "tr",
+        'extract': "ex",
+    },
+
+}
+
+# OCR Configuration
+OCR_CONFIG = {
+    'DEFAULT_MODE': 'default',
+    'OCR_MODES': {
+        'default': '--oem 3 --psm 3',
+        'accurate': '--oem 3 --psm 6'
+    },
+    'PREPROCESSING_LEVEL': 'medium',
+    'SAVE_DIRECTORY': r"/tmp/AIAssistant/",
+    'THRESH_VALUE': 150,
+    'KERNEL_SIZE': (1, 1),
+    'PROCESSED_FRAME_FILENAME': "processed_frame.jpg",
+}
+
+# LTD Configuration
+LTD_CONFIG = {
+    'MODEL_NAME': 'Helsinki-NLP/opus-mt-en-ar',
+    'VOSK_MODELS_DIR': '/path/to/vosk/models/',
+    'SUPPORTED_LANGUAGES': ['en', 'ar', 'fr'],
+    'DEFAULT_LANGUAGE': 'en',
+    'MAX_LENGTH': 512,
+    'BATCH_SIZE': 8,
+    'VOSK_MODELS_DIR': '/path/to/vosk/models/',
 }

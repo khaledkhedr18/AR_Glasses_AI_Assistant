@@ -1,111 +1,87 @@
 import os
 import cv2
 import numpy as np
+import pytesseract
+from utils.Config import OCR_CONFIG
 from utils.Logging import Logger
 
+
 class OCRHandler:
-    """
-    Handler class for Optical Character Recognition operations.
-    Works independently of other handlers, communicating only through LLM_Manager.
-    """
     def __init__(self):
         self.logger = Logger()
-        self.logger.info("Initializing LTD Handler")
+        self.logger.info("Initializing OCR Handler")
+        self.preprocessing_level = OCR_CONFIG['PREPROCESSING_LEVEL']
+        self.ocr_configs = OCR_CONFIG['OCR_MODES']
+        self.default_mode = OCR_CONFIG['DEFAULT_MODE']
+        self.save_directory = OCR_CONFIG['SAVE_DIRECTORY']
+        self.processed_frame_filename = OCR_CONFIG['PROCESSED_FRAME_FILENAME']
 
-    def recognize_text_from_image(self, image_path, lang="eng", save_processed=True, mode="default"):
+    def extract_text_from_frame(self, frame, lang="en", save_processed=False, mode=None):
         """
-        Recognize text in an image using Tesseract OCR with advanced preprocessing.
-
-        Args:
-            image_path (str): Path to the image file
-            lang (str): The language code for OCR
-            save_processed (bool): Whether to save the processed image
-            mode (str): OCR mode (default, document, etc.)
-
-        Returns:
-            str: Recognized text or empty string if failed
+        Extract text from camera frame array using OCR.
         """
         try:
-            # Load and preprocess image
-            img = cv2.imread(image_path)
-            if img is None:
-                self.logger.error(f"Failed to open image file: {image_path}")
+            if frame is None:
+                self.logger.error("Invalid frame array")
                 return ""
 
-            # Process image based on preprocessing level
-            processed = self._preprocess_image(img)
+            mode = mode or self.default_mode
+            processed = self._preprocess_image(frame)
 
-            # Save processed image if requested
             if save_processed:
-                processed_path = os.path.splitext(image_path)[0] + "_processed.jpg"
-                cv2.imwrite(processed_path, processed)
-                self.logger.debug(f"Saved preprocessed image to: {processed_path}")
+                save_path = os.path.join(self.save_directory, self.processed_frame_filename)
+                cv2.imwrite(save_path, processed)
+                self.logger.debug(f"Saved preprocessed frame to: {save_path}")
 
-            # Get OCR config
-            custom_config = self.ocr_configs.get(mode, self.ocr_configs["default"])
-
-            # Perform OCR
-            raw_text = pytesseract.image_to_string(processed, lang=lang, config=custom_config)
-            text = raw_text.strip()
+            custom_config = self.ocr_configs[mode]
+            text = pytesseract.image_to_string(processed, lang=lang, config=custom_config)
+            text = text.strip()
 
             if not text:
-                self.logger.warning("No text found in the image")
+                self.logger.warning("No text found in frame")
 
             return text
 
         except Exception as e:
-            self.logger.error(f"OCR Error: {e}")
+            self.logger.log_error_with_traceback("OCR Error", e)
             return ""
+
+    def set_preprocessing_level(self, level):
+        """Set image preprocessing level."""
+        if level in ["low", "medium", "high"]:
+            self.preprocessing_level = level
+            return True
+        return False
 
     def _preprocess_image(self, img):
         """
-        Preprocess image for better OCR results.
-
-        Args:
-            img: OpenCV image object
-
-        Returns:
-            Processed OpenCV image
+        Preprocess image array for better OCR results.
         """
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        try:
+            if len(img.shape) == 3:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = img
 
-        if self.preprocessing_level == "low":
-            # Minimal processing
-            return gray
+            if self.preprocessing_level == "low":
+                return gray
 
-        # Medium processing (default)
-        denoised = cv2.fastNlMeansDenoising(gray, h=10)
-        _, thresh = cv2.threshold(denoised, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            denoised = cv2.fastNlMeansDenoising(gray, h=10)
+            _, thresh = cv2.threshold(denoised, OCR_CONFIG['THRESH_VALUE'], 255,
+                                   cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        if self.preprocessing_level == "medium":
+            if self.preprocessing_level == "medium":
+                return thresh
+
+            if self.preprocessing_level == "high":
+                kernel = np.ones(OCR_CONFIG['KERNEL_SIZE'], np.uint8)
+                processed = cv2.dilate(thresh, kernel, iterations=1)
+                processed = cv2.erode(processed, kernel, iterations=1)
+                return processed
+
             return thresh
 
-        # High processing - additional steps for challenging images
-        if self.preprocessing_level == "high":
-            processed = cv2.dilate(thresh, np.ones((1, 1), np.uint8), iterations=1)
-            processed = cv2.erode(processed, np.ones((1, 1), np.uint8), iterations=1)
+        except Exception as e:
+            self.logger.log_error_with_traceback("Error preprocessing image", e)
+            return None
 
-            # Edge enhancement
-            edges = cv2.Canny(processed, 50, 150)
-            processed = cv2.addWeighted(processed, 0.8, edges, 0.2, 0)
-
-            return processed
-
-        # Default fallback
-        return thresh
-
-        def set_preprocessing_level(self, level):
-            """
-            Set image preprocessing level.
-
-            Args:
-                level (str): "low", "medium", or "high"
-
-            Returns:
-                bool: True if successful, False otherwise
-            """
-            if level in ["low", "medium", "high"]:
-                self.preprocessing_level = level
-                return True
-            return False

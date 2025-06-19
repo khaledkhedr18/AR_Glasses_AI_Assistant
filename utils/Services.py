@@ -12,7 +12,7 @@ class Services:
         self.model = Model(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
         self.logger = Logger()
 
-    def recognize_text_from_speech(self, wave_data):
+    def recognize_text_from_speech(self, wave_data, language=None):
         """
         Convert WAV audio data to text using Vosk.
         Args:
@@ -111,8 +111,3 @@ class Services:
             self.logger.warning(f"No match found above threshold ({confidence_threshold}%)")
             return None
 
-    def verify_input_tool(self):
-        pass
-
-    def verify_command_type(self):
-        pass

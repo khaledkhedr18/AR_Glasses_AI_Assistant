@@ -2,8 +2,10 @@ from utils.Logging import Logger
 from Handlers.OCR_Handler import OCRHandler
 from Handlers.Translation_Handler import TranslationHandler
 from Handlers.LTD_Handler import LTDHandler
-from utils.Config import LLM_CONFIG, IO_CONFIG
-from utils.Services import Services
+from utils.Config import LLM_CONFIG
+from utils.Services import Services, IO_CONFIG
+import numpy as np
+from datetime import datetime
 import threading
 
 
@@ -23,6 +25,10 @@ class LLMManager:
         self.logger = Logger()
         self.logger.info("Initializing LLM_Manager")
 
+        self.supported_lang_codes = LLM_CONFIG['SUPPORTED_LANG_CODES']
+        self.supported_languages = LLM_CONFIG['SUPPORTED_LANGUAGES']
+        self.supported_modes = IO_CONFIG['SUPPORTED_MODES']
+        self.prompts_supported = LLM_CONFIG['PROMPTS_SUPPORTED']
         # Initialize core handlers
         self.translation_handler = TranslationHandler()
         self.ocr_handler = OCRHandler()
@@ -35,15 +41,7 @@ class LLMManager:
         # Model and resource caches
         self.language_models = {}
         self.active_translations = {}
-
-        # Translation configurations
-        self.supported_modes = ['image', 'speech', 'both']
-        self.supported_languages = {
-            'english': 'en',
-            'arabic': 'ar',
-            'french': 'fr'
-            # Add more languages as needed
-        }
+        self.translation_counter = 0
 
         # Performance settings
         self.ocr_batch_size = 1024  # bytes
@@ -51,9 +49,9 @@ class LLMManager:
 
         self.logger.info("LLM_Manager initialized successfully")
 
-    def translate_input(self, user_config, input_data):
+    def process_multimedia_input(self, user_config, input_data):
         """
-        Translate based on input type and user configuration.
+        Process and translate multimedia input (images and/or speech) based on user configuration.
 
         Args:
             user_config (dict): {
@@ -62,74 +60,118 @@ class LLMManager:
                 'translation_mode': 'image'|'speech'|'both'
             }
             input_data: Can be:
-                - str: Path to image file
-                - bytes: Audio data
-                - tuple: (image_path, audio_data) for combined mode
+                - numpy.ndarray: Array of pixels from picam2.capture_array()
+                - numpy.ndarray: Audio wave chunks
+                - tuple: (frame_array, audio_chunks) for combined mode
 
         Returns:
-            dict: Translation results
+            dict: Translation results with extracted and translated content
         """
         self.logger.info(f"Starting translation with mode: {user_config['translation_mode']}")
 
-        source_code = self._get_language_code(user_config['source_lang'])
-        dest_code = self._get_language_code(user_config['dest_lang'])
+        src_lang_code = self._get_language_code(user_config['source_lang'])
+        dest_lang_code = self._get_language_code(user_config['dest_lang'])
 
-        if not source_code or not dest_code:
+        if not src_lang_code or not dest_lang_code:
             self.logger.error("Invalid language configuration")
             return None
 
         try:
-            self.ltd_handler.load_language_model(source_code)
-            self.ltd_handler.load_language_model(dest_code)
+            self.ltd_handler.load_language_model(src_lang_code)
+            self.ltd_handler.load_language_model(dest_lang_code)
         except Exception as e:
             self.logger.error(f"Failed to load language models: {str(e)}")
             return None
 
         result = {
             'success': False,
+            'operation_type': None,  # Will be 'translation' or 'extraction'
             'original_text': '',
             'translated_text': '',
-            'speech_translation': None
+            'extracted_text': None,
+            'storage_index': None  # Will store the index if text was saved
         }
 
         try:
             if user_config['translation_mode'] == 'image':
-                if not isinstance(input_data, str):
-                    raise ValueError("Image mode requires image path string")
+                if not isinstance(input_data, np.ndarray):
+                    raise ValueError("Image mode requires array of pixels from capture_array()")
 
-                extracted_text = self.ocr_handler.recognize_text_from_image(input_data, source_code)
+                # First extract text from frame
+                extracted_text = self.ocr_handler.extract_text_from_frame(input_data, src_lang_code)
+                result['extracted_text'] = extracted_text
+
                 if extracted_text:
                     result['original_text'] = extracted_text
-                    result['translated_text'] = self.translation_handler.translate_text(extracted_text, source_code, dest_code)
-                    result['success'] = bool(result['translated_text'])
+                    # Then translate if text was found
+                    result['translated_text'] = self.translation_handler.translate_text(
+                        extracted_text, src_lang_code, dest_lang_code
+                    )
+                    result['operation_type'] = 'translation'
+                    result['success'] = True
 
             elif user_config['translation_mode'] == 'speech':
-                if not isinstance(input_data, bytes):
-                    raise ValueError("Speech mode requires audio data bytes")
+                if not isinstance(input_data, np.ndarray):
+                    raise ValueError("Speech mode requires numpy array of audio chunks")
 
-                speech_text = self.translation_handler.translate_text(input_data, source_code, dest_code)
-                if speech_text:
-                    result['original_text'] = input_data
-                    result['translated_text'] = speech_text
-                    result['success'] = True
+                # First recognize speech
+                recognized_text = self.service.recognize_text_from_speech(input_data, src_lang_code)
+                if recognized_text:
+                    result['original_text'] = recognized_text
+                    # Then translate recognized text
+                    speech_text = self.translation_handler.translate_text(
+                        recognized_text, src_lang_code, dest_lang_code
+                    )
+                    if speech_text:
+                        result['translated_text'] = speech_text
+                        result['operation_type'] = 'translation'
+                        result['success'] = True
 
             elif user_config['translation_mode'] == 'both':
                 if not isinstance(input_data, tuple) or len(input_data) != 2:
-                    raise ValueError("Both mode requires tuple of (image_path, audio_data)")
+                    raise ValueError("Both mode requires tuple of (frame_array, audio_chunks)")
 
-                image_path, audio_data = input_data
+                frame_array, audio_chunks = input_data
+                if not isinstance(frame_array, np.ndarray) or not isinstance(audio_chunks, np.ndarray):
+                    raise ValueError("Both inputs must be numpy arrays")
 
-                # Process image
-                extracted_text = self.ocr_handler.recognize_text_from_image(image_path, source_code)
-                if extracted_text:
-                    result['original_text'] = extracted_text
-                    result['translated_text'] = self.translation_handler.translate_text(extracted_text, source_code, dest_code)
-                    result['success'] = bool(result['translated_text'])
+                # First handle speech recognition
+                recognized_text = self.service.recognize_text_from_speech(audio_chunks, src_lang_code)
+                if recognized_text:
+                    result['original_text'] = recognized_text
+                    # Get command from speech ("tr" or "ex")
+                    command = self.service.verify_user_input(recognized_text, self.prompts_supported)
 
-                # Process speech
-                speech_translation = self.translation_handler.translate_text(audio_data, source_code, dest_code)
-                if speech_translation:
-                    result['speech_translation'] = speech_translation
+                    # Extract text from image
+                    extracted_text = self.ocr_handler.extract_text_from_frame(frame_array, src_lang_code)
+
+                    # Then handle image content translation
+                    if extracted_text:
+                        result['extracted_text'] = extracted_text
+
+                        # If command is "tr", translate the extracted text
+                        if command == "tr":
+                            image_translation = self.translation_handler.translate_text(
+                                extracted_text, src_lang_code, dest_lang_code
+                            )
+                            if image_translation:
+                                result['translated_text'] = image_translation
+                                result['operation_type'] = 'translation'
+                                result['success'] = True
+
+                        # If command is "ex", just store the extracted text
+                        elif command == "ex":
+                            # Store in memory/cache with metadata
+                            self.active_translations[self.translation_counter] = {
+                                'text': extracted_text,
+                                'timestamp': datetime.now(),
+                                'source_lang': src_lang_code
+                            }
+                            result['storage_index'] = self.translation_counter
+                            result['operation_type'] = 'extraction'
+                            result['success'] = True
+                            result['extracted_text'] = extracted_text
+                            self.translation_counter += 1
 
         except Exception as e:
             self.logger.error(f"Translation failed: {str(e)}")
@@ -137,6 +179,50 @@ class LLMManager:
 
         self.logger.info("Translation completed" if result['success'] else "Translation failed")
         return result if result['success'] else None
+
+    def _get_language_code(self, language):
+        """
+        Convert language name to language code.
+
+        Args:
+            language (str): Language name or code
+
+        Returns:
+            str: Language code or None if invalid
+        """
+        # If it's already a code, return it
+        if language in  self.supported_lang_codes:
+            return language
+
+        return self.supported_languages.get(language.lower(), None)
+
+    def get_all_translations(self):
+        """
+        Retrieve all stored translations.
+
+        Returns:
+            dict: All stored translations
+        """
+        return self.active_translations
+
+    def clear_stored_translations(self):
+        """
+        Clear all stored translations from memory.
+        """
+        self.active_translations.clear()
+        self.translation_counter = 0
+
+    def get_stored_translation(self, index):
+        """
+        Retrieve a specific stored translation by index.
+
+        Args:
+            index (int): The translation index
+
+        Returns:
+            dict: Translation data or None if not found
+        """
+        return self.active_translations.get(index)
 
     def process_text_command(self, text_input):
         """
@@ -197,6 +283,17 @@ class LLMManager:
             self.logger.error("OCR failed or no text found")
             return None
 
+
+
+
+
+
+
+
+
+
+
+
     def process_image_and_translate(self, image_path, source_lang=None, target_lang=None):
         """
         Process an image, extract text, and translate it.
@@ -242,19 +339,6 @@ class LLMManager:
             "source_language": source_lang,
             "target_language": target_lang
         }
-
-
-    def check_translation_exit_command(self, text):
-        """
-        Check if the text contains a command to exit translation mode.
-
-        Args:
-            text (str): Text to check
-
-        Returns:
-            bool: True if exit command detected
-        """
-        return self.translation_handler.detect_translation_exit_phrase(text)
 
     # ======== PRIVATE HELPER METHODS ========
 
@@ -310,21 +394,7 @@ class LLMManager:
             "content": "Ready to capture image for text extraction"
         }
 
-    def _get_language_code(self, language):
-        """
-        Convert language name to language code.
 
-        Args:
-            language (str): Language name or code
-
-        Returns:
-            str: Language code or None if invalid
-        """
-        # If it's already a code, return it
-        if language in IO_CONFIG['SUPPORTED_LANGUAGES_CODES']:
-            return language
-
-        return IO_CONFIG['language_map'].get(language.lower(), None)
 
     def cleanup(self):
         """Clean up resources used by the LLM_Manager and its handlers."""
@@ -337,4 +407,6 @@ class LLMManager:
         # Clear speech models
         with self._model_lock:
             self.speech_models.clear()
+
+
 
