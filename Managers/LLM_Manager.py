@@ -50,7 +50,7 @@ class LLMManager:
 
     def process_user_inputs(self, user_config, input_data):
         """
-        Process and translate multimedia input (images and/or speech) based on user configuration.
+        Process and translate multimedia input based on user configuration.
 
         Args:
             user_config (dict): {
@@ -73,19 +73,42 @@ class LLMManager:
         if not model_setup:
             return None
 
-        src_lang_code, dest_lang_code, model_components = model_setup
+        src_lang_code, dest_lang_code, translation_model_components = model_setup
+
+        # Get speech model components if needed
+        speech_model_components = None
+        if user_config['translation_mode'] in ['speech', 'both']:
+            speech_model_components = self.ltd_handler.get_speech_model(src_lang_code)
+            if not speech_model_components[1]:  # Check success flag
+                self.logger.error("Failed to load speech recognition model")
+                return None
+
         result = self.__create_result_template()
 
         try:
             # Process based on translation mode
             if user_config['translation_mode'] == 'image':
-                result = self.__handle_image_mode(input_data, src_lang_code, model_components)
+                result = self.__handle_image_mode(
+                    input_data,
+                    src_lang_code,
+                    translation_model_components
+                )
 
             elif user_config['translation_mode'] == 'speech':
-                result = self.__handle_speech_mode(input_data, src_lang_code, model_components)
+                result = self.__handle_speech_mode(
+                    input_data,
+                    src_lang_code,
+                    translation_model_components,
+                    speech_model_components
+                )
 
             elif user_config['translation_mode'] == 'both':
-                result = self.__handle_both_mode(input_data, src_lang_code, model_components)
+                result = self.__handle_both_mode(
+                    input_data,
+                    src_lang_code,
+                    translation_model_components,
+                    speech_model_components
+                )
 
         except Exception as e:
             self.logger.error(f"Translation failed: {str(e)}")
@@ -192,14 +215,15 @@ class LLMManager:
 
         return result
 
-    def __handle_speech_mode(self, input_data, src_lang_code, model_components):
+    def __handle_speech_mode(self, input_data, src_lang_code, translation_model_components, speech_model_components):
         """
         Handle speech-only translation mode.
 
         Args:
             input_data (numpy.ndarray): Audio wave chunks
             src_lang_code (str): Source language code
-            model_components (tuple): Translation model components
+            translation_model_components (tuple): Translation model components
+            speech_model_components (tuple): Speech recognition model components
 
         Returns:
             dict: Translation results
@@ -208,13 +232,16 @@ class LLMManager:
             raise ValueError("Speech mode requires numpy array of audio chunks")
 
         result = self.__create_result_template()
-        recognized_text = self.service.recognize_text_from_speech(input_data, src_lang_code)
+        recognized_text = self.service.recognize_text_from_speech(
+            input_data,
+            speech_model_components
+        )
 
         if recognized_text:
             result['original_text'] = recognized_text
             translated_text = self.translation_handler.translate_text(
                 recognized_text,
-                model_components
+                translation_model_components
             )
             if translated_text:
                 result['translated_text'] = translated_text

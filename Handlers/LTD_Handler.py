@@ -34,6 +34,7 @@ class LTDHandler:
 
         # Language configuration
         self.languages_map = SERVICES_CONFIG['LANGUAGES_MAP']
+        self.recognizer_model_path = SERVICES_CONFIG['recognizer_model_path']
 
         # Load models only once across all instances
         with LTDHandler._model_lock:
@@ -120,13 +121,12 @@ class LTDHandler:
         """Preload all speech and translation models using thread pool."""
         self.logger.info("Starting parallel model loading...")
 
-        vosk_base_path = LTD_CONFIG['VOSK_MODELS_DIR']
         languages = list(self.languages_map.values())
         loading_tasks = []
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             for lang in languages:
-                speech_model_path = os.path.join(vosk_base_path, f'vosk-model-{lang}')
+                speech_model_path = os.path.join(self.recognizer_model_path, f'vosk-model-{lang}')
                 if os.path.exists(speech_model_path):
                     loading_tasks.append(
                         executor.submit(self._load_speech_model_threaded, lang)

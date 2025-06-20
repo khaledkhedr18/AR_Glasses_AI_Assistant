@@ -10,23 +10,30 @@ from utils.Config import SERVICES_CONFIG
 
 class Services:
     def __init__(self):
-        self.model = SERVICES_CONFIG['recognizer_model_path' + '']
         self.logger = Logger()
         self.ltd_handler = LTDHandler()
         self.recognizer_model_path = SERVICES_CONFIG['recognizer_model_path']
         self.supported_lang_codes = SERVICES_CONFIG.get('supported_lang_codes', [])
         self.languages_map = SERVICES_CONFIG.get('languages_map', {})
 
-
-    def recognize_text_from_speech(self, wave_data, model_path=SERVICES_CONFIG['recognizer_model_path']):
+    def recognize_text_from_speech(self, wave_data, model_components=None):
         """
         Convert WAV audio data to text using Vosk.
+
         Args:
             wave_data: BytesIO object containing WAV data or raw wave chunks
+            model_components (tuple): (model, success) tuple from LTDHandler
+
         Returns:
             str: Recognized text or None if recognition fails
         """
         try:
+            if not model_components or not model_components[1]:  # Check if model_components is valid
+                self.logger.error("Invalid speech model components")
+                return None
+
+            speech_model = model_components[0]  # Extract the Vosk model
+
             # If input is already a BytesIO/file-like object, use it directly
             if isinstance(wave_data, (io.BytesIO, io.BufferedRandom)):
                 wf = wave.open(wave_data, "rb")
@@ -35,9 +42,8 @@ class Services:
                 buffer = io.BytesIO(wave_data)
                 wf = wave.open(buffer, "rb")
 
-            self.model = Model(model_path)
             with wf:
-                recognizer = KaldiRecognizer(self.model, wf.getframerate())
+                recognizer = KaldiRecognizer(speech_model, wf.getframerate())
                 text = ""
 
                 # Process audio in chunks
@@ -57,7 +63,7 @@ class Services:
             return text if text else None
 
         except Exception as e:
-            print(f"Error processing audio: {e}")
+            self.logger.error(f"Error processing audio: {e}")
             return None
 
     def verify_user_input(self, text, items_dict, confidence_threshold = SERVICES_CONFIG['confidence_threshold'] if 'confidence_threshold' in SERVICES_CONFIG else 75):
