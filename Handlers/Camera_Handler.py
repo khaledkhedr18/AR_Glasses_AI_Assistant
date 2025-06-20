@@ -2,7 +2,7 @@ import threading
 import cv2
 from picamera2 import Picamera2
 import libcamera
-from utils.Config import CAMERA_CONFIG
+from utils.Config import CameraConfig
 from utils.Logging import Logger
 import os
 
@@ -22,12 +22,17 @@ class CameraHandler:
         self.logger.info("Initializing Camera Handler")
         self.camera_lock = threading.Lock()
         self.frame_buffer = None
-        self.capture_width = CAMERA_CONFIG['CAPTURE_WIDTH']
-        self.capture_height = CAMERA_CONFIG['CAPTURE_HEIGHT']
-        self.quality = CAMERA_CONFIG['IMAGE_QUALITY']
-        self.save_dir = CAMERA_CONFIG['SAVE_DIRECTORY']
-        self.saved_image_name = CAMERA_CONFIG['IMAGE_FILENAME']
+
+        # Use new config structure
+        self.capture_width = CameraConfig.RESOLUTION['WIDTH']
+        self.capture_height = CameraConfig.RESOLUTION['HEIGHT']
+        self.quality = CameraConfig.IMAGE['QUALITY']
+        self.save_dir = CameraConfig.IMAGE['SAVE_DIRECTORY']
+        self.saved_image_name = CameraConfig.IMAGE['FILENAME']
         self.image_save_path = None
+
+        # Create save directory if it doesn't exist
+        os.makedirs(self.save_dir, exist_ok=True)
 
         with CameraHandler._camera_init_lock:
             if not CameraHandler._camera_initialized and not CameraHandler._initialization_error:
@@ -161,9 +166,38 @@ class CameraHandler:
         """Initialize the camera with configured settings."""
         try:
             if not CameraHandler._picam2:
-                # Your existing initialization code...
+                CameraHandler._picam2 = Picamera2()
+
+                # Configure camera using new config structure
+                camera_config = {
+                    "size": (self.capture_width, self.capture_height),
+                    "format": CameraConfig.CONTROLS['COLOR_FORMAT']
+                }
+
+                CameraHandler._picam2.configure(**camera_config)
+
+                # Set camera controls
+                controls = {
+                    "ExposureTime": CameraConfig.PARAMETERS['EXPOSURE'],
+                    "AnalogueGain": CameraConfig.PARAMETERS['GAIN'],
+                    "FrameDurationLimits": (CameraConfig.PARAMETERS['FRAME_DURATION'],
+                                            CameraConfig.PARAMETERS['FRAME_DURATION']),
+                    "FrameRate": CameraConfig.PARAMETERS['FRAME_RATE'],
+                    "HFlip": CameraConfig.CONTROLS['HFLIP'],
+                    "VFlip": CameraConfig.CONTROLS['VFLIP'],
+                    "AeEnable": CameraConfig.CONTROLS['AE_ENABLE'],
+                    "AwbEnable": CameraConfig.CONTROLS['AWB_ENABLE']
+                }
+
+                # Set focus mode
+                if CameraConfig.CONTROLS['FOCUS_MODE'].lower() == "continuous":
+                    controls["AfMode"] = libcamera.controls.AfModeEnum.Continuous
+
+                CameraHandler._picam2.set_controls(controls)
+                CameraHandler._picam2.start()
                 CameraHandler._camera_initialized = True
                 CameraHandler._initialization_error = None
+
         except Exception as e:
             CameraHandler._initialization_error = str(e)
             self.logger.log_error_with_traceback("Camera Initialization Error", e)

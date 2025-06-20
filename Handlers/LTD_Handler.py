@@ -5,7 +5,7 @@ import torch
 from vosk import Model
 from transformers import MarianMTModel, MarianTokenizer
 from utils.Services import Services
-from utils.Config import LTD_CONFIG, SERVICES_CONFIG
+from utils.Config import LTDConfig, ServicesConfig
 from utils.Logging import Logger
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -31,16 +31,17 @@ class LTDHandler:
         self.logger = Logger()
         self.logger.info("Initializing LTD Handler")
         self.service = Services()
+        self.languages_map = ServicesConfig.LANGUAGES['MAPPING']
+        self.models_dir = LTDConfig.TRANSLATION['TRANSLATION_MODELS_DIR']
+        self.recognizer_model_path = ServicesConfig.RECOGNITION['RECOGNITION_MODEL_DIR']
+        self.model_timeout = LTDConfig.TRANSLATION['MODELS_LOAD_TIMEOUT']
 
-        # Language configuration
-        self.languages_map = SERVICES_CONFIG['LANGUAGES_MAP']
-        self.recognizer_model_path = SERVICES_CONFIG['recognizer_model_path']
-
-        # Load models only once across all instances
-        with LTDHandler._model_lock:
-            if not LTDHandler._models_loaded:
-                self.__preload_all_models()
-                LTDHandler._models_loaded = True
+        # Load models with double-checked locking pattern
+        if not LTDHandler._models_loaded:
+            with LTDHandler._model_lock:
+                if not LTDHandler._models_loaded:
+                    self.__preload_all_models()
+                    LTDHandler._models_loaded = True
 
     def get_translation_model(self, source_lang, target_lang):
         """
@@ -53,7 +54,7 @@ class LTDHandler:
         Returns:
             tuple: (model, tokenizer, bool) - model, tokenizer and success flag
         """
-        if not self._loading_complete.wait(timeout=LTD_CONFIG['MODELS_LOAD_TIMEOUT']):  # Add timeout
+        if not self._loading_complete.wait(timeout=self.model_timeout):  # Add timeout
             self.logger.error("Timeout waiting for models to load")
             return None, None, False
 
@@ -79,7 +80,7 @@ class LTDHandler:
         Returns:
             tuple: (Model, bool) - Vosk model and success flag
         """
-        if not self._loading_complete.wait(timeout=LTD_CONFIG['MODELS_LOAD_TIMEOUT']):  # Add timeout
+        if not self._loading_complete.wait(timeout=self.model_timeout):  # Add timeout
             self.logger.error("Timeout waiting for models to load")
             return None, False
 
@@ -118,84 +119,100 @@ class LTDHandler:
                 raise
 
     def __preload_all_models(self):
-        """Preload all speech and translation models using thread pool."""
+        """
+        Preload all speech and translation models using thread pool.
+        Speech models are loaded from ServicesConfig.RECOGNITION['VOSK_MODEL_PATH']
+        Translation models are loaded from LTDConfig.TRANSLATION['MODELS_DIR']
+        """
         self.logger.info("Starting parallel model loading...")
-
-        languages = list(self.languages_map.values())
         loading_tasks = []
 
         with ThreadPoolExecutor(max_workers=3) as executor:
-            for lang in languages:
-                speech_model_path = os.path.join(self.recognizer_model_path, f'vosk-model-{lang}')
-                if os.path.exists(speech_model_path):
-                    loading_tasks.append(
-                        executor.submit(self._load_speech_model_threaded, lang)
-                    )
+            # Load speech models from VOSK_MODELS config
+            for lang, model_name in ServicesConfig.RECOGNITION['VOSK_MODELS'].items():
+                speech_model_path = os.path.join(ServicesConfig.RECOGNITION['VOSK_MODEL_PATH'], model_name)
+                loading_tasks.append(
+                    executor.submit(self.__load_speech_model_threaded, lang, speech_model_path)
+                )
 
-            for src_lang in languages:
-                for tgt_lang in languages:
+            # Load translation models for all language pairs
+            supported_langs = ServicesConfig.LANGUAGES['SUPPORTED']
+            for src_lang in supported_langs:
+                for tgt_lang in supported_langs:
                     if src_lang != tgt_lang:
                         loading_tasks.append(
                             executor.submit(
-                                self._load_translation_model_threaded,
+                                self.__load_translation_model_threaded,
                                 src_lang,
                                 tgt_lang
                             )
                         )
 
+            # Wait for all tasks to complete
             for future in as_completed(loading_tasks):
                 try:
                     future.result()
                 except Exception as e:
                     self.logger.error(f"Model loading error: {str(e)}")
 
-        self._loading_complete.set()
-        self.logger.info("All models loaded successfully")
+        # Set completion flag only if models were loaded
+        if self._speech_models and self._translation_models:
+            self._loading_complete.set()
+            self.logger.info(f"Models loaded - Speech: {len(self._speech_models)}, "
+                             f"Translation: {len(self._translation_models)}")
+        else:
+            self.logger.error("Failed to load all required models")
 
-    def _load_speech_model_threaded(self, language):
+    def __load_speech_model_threaded(self, language, model_path):
         """
         Thread-safe method to load a speech recognition model.
 
         Args:
-            language (str): Language code for the model to load
-
-        Loads Vosk model for the specified language and stores it in _speech_models.
-        Uses thread lock to ensure thread-safe model storage.
+            language (str): Language code for the model
+            model_path (str): Full path to the VOSK model directory
         """
         try:
-            model_path = os.path.join(LTD_CONFIG['VOSK_MODELS_DIR'], f'vosk-model-{language}')
             if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Speech model not found for {language}")
+                raise FileNotFoundError(f"Speech model not found at: {model_path}")
 
             model = Model(model_path)
             with self._model_lock:
                 self._speech_models[language] = model
-                self.logger.info(f"Loaded speech model for {language}")
+                self.logger.info(f"Loaded speech model for {language} from {model_path}")
 
         except Exception as e:
             self.logger.error(f"Failed to load speech model for {language}: {str(e)}")
+            raise
 
-    def _load_translation_model_threaded(self, src_lang, tgt_lang):
+    def __load_translation_model_threaded(self, src_lang, tgt_lang):
         """
         Thread-safe method to load a translation model.
 
         Args:
             src_lang (str): Source language code
             tgt_lang (str): Target language code
-
-        Loads MarianMT model and tokenizer for the language pair and stores them.
-        Uses thread lock to ensure thread-safe model storage.
         """
         try:
             model_key = f"{src_lang}-{tgt_lang}"
-            model_name = f'Helsinki-NLP/opus-mt-{src_lang}-{tgt_lang}'
+            model_name = LTDConfig.TRANSLATION['MODEL_NAME'].format(
+                source=src_lang, target=tgt_lang
+            )
 
-            model = MarianMTModel.from_pretrained(model_name, torch_dtype=torch.float32)
-            tokenizer = MarianTokenizer.from_pretrained(model_name)
+            # Load model with specific settings
+            model = MarianMTModel.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32,
+                cache_dir=LTDConfig.TRANSLATION['MODELS_DIR']
+            )
+            tokenizer = MarianTokenizer.from_pretrained(
+                model_name,
+                cache_dir=LTDConfig.TRANSLATION['MODELS_DIR']
+            )
 
             with self._model_lock:
                 self._translation_models[model_key] = (model, tokenizer)
                 self.logger.info(f"Loaded translation model for {model_key}")
 
         except Exception as e:
-            self.logger.error(f"Failed to load translation model for {model_key}: {str(e)}")
+            self.logger.error(f"Failed to load translation model for {src_lang}-{tgt_lang}: {str(e)}")
+            raise

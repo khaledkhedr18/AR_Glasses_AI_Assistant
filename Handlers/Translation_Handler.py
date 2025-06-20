@@ -37,3 +37,20 @@ class TranslationHandler:
         except Exception as e:
             self.logger.error(f"Translation error: {str(e)}")
             return None
+
+    def __batch_translate_text(self, texts, model_components):
+        """Batch translate multiple texts"""
+        if not texts or not model_components:
+            return []
+
+        model, tokenizer, success = model_components
+        if not success:
+            return []
+
+        try:
+            inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            translations = model.generate(**inputs)
+            return [tokenizer.decode(t, skip_special_tokens=True) for t in translations]
+        except Exception as e:
+            self.logger.error(f"Batch translation error: {str(e)}")
+            return []

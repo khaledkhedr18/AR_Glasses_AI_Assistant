@@ -1,19 +1,19 @@
 from fuzzywuzzy import fuzz
 from vosk import Model, KaldiRecognizer
-from Handlers.LTD_Handler import LTDHandler
 import wave
 import json
 import io
 from utils.Logging import Logger
-from utils.Config import SERVICES_CONFIG
+from utils.Config import ServicesConfig
 
 
 class Services:
     def __init__(self):
+        # Initialize Services with necessary configurations and logger
         self.logger = Logger()
-        self.recognizer_model_path = SERVICES_CONFIG['recognizer_model_path']
-        self.supported_lang_codes = SERVICES_CONFIG.get('supported_lang_codes', [])
-        self.languages_map = SERVICES_CONFIG.get('languages_map', {})
+        self.supported_lang_codes = ServicesConfig.LANGUAGES['SUPPORTED']
+        self.languages_map = ServicesConfig.LANGUAGES['MAPPING']
+        self._lang_code_cache = {}
 
     def recognize_text_from_speech(self, wave_data, model_components=None):
         """
@@ -65,7 +65,7 @@ class Services:
             self.logger.error(f"Error processing audio: {e}")
             return None
 
-    def verify_user_input(self, text, items_dict, confidence_threshold = SERVICES_CONFIG['confidence_threshold'] if 'confidence_threshold' in SERVICES_CONFIG else 75):
+    def verify_user_input(self, text, items_dict, confidence_threshold=ServicesConfig.RECOGNITION['FUZZY_CONFIDENCE_THRESHOLD']):
         """
         Generic fuzzy matching method to verify user input against a dictionary or list of items.
 
@@ -133,25 +133,27 @@ class Services:
         Returns:
             str: Standardized language code if valid, None otherwise
         """
-
         if not language:
-            self.logger.error("Empty language input")
             return None
 
-        # Convert input to lowercase for consistency
         language = language.lower().strip()
 
-        # Case 1: Input is already a valid language code
+        # Check cache first
+        if language in self._lang_code_cache:
+            return self._lang_code_cache[language]
+
+        # Existing logic...
+        code = None
         if language in self.supported_lang_codes:
-            self.logger.debug(f"Valid language code: {language}")
-            return language
-
-        # Case 2: Input is a language name that needs to be mapped to code
-        if language in self.languages_map:
+            code = language
+        elif language in self.languages_map:
             code = self.languages_map[language]
-            self.logger.debug(f"Mapped {language} to code: {code}")
-            return code
 
-        self.logger.warning(f"Unsupported language: {language}")
-        return None
+        # Update cache
+        if code:
+            self._lang_code_cache[language] = code
+
+        return code
+
+
 

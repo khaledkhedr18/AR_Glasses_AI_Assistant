@@ -114,6 +114,18 @@ class LLMManager:
         """
         return self.active_translations.get(index)
 
+    def clear_old_translations(self, max_age_minutes=30):
+        """Clear translations older than specified minutes"""
+        current_time = datetime.now()
+        expired = []
+        for idx, trans in self.active_translations.items():
+            age = (current_time - trans['timestamp']).total_seconds() / 60
+            if age > max_age_minutes:
+                expired.append(idx)
+
+        for idx in expired:
+            del self.active_translations[idx]
+
     def __setup_translation_environment(self, user_config):
         """
         Setup and validate the translation environment including models.

@@ -2,7 +2,7 @@ from Handlers.GUI_Handler import GUIHandler
 from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
 from utils.Services import Services
-from utils.Config import IO_CONFIG, SERVICES_CONFIG
+from utils.Config import IOConfig
 import threading
 import time
 from utils.Logging import Logger
@@ -18,10 +18,11 @@ class IOManager:
         self.audio = AudioHandler()
         self.Services = Services()
         self.logger = Logger()
-        self.wake_word = IO_CONFIG['WAKE_WORD']
-        self.mode_keywords = IO_CONFIG['MODE_KEYWORDS']
-        self.audio_record_timeout = IO_CONFIG['AUDIO_RECORD_TIMEOUT']
-        self.supported_languages = SERVICES_CONFIG['LANGUAGES_MAP']
+        self.wake_word = IOConfig.INTERFACE['WAKE_WORD']
+        self.mode_keywords = IOConfig.KEYWORDS['MODE']
+        self.command_keywords = IOConfig.KEYWORDS['COMMANDS']
+        self.audio_record_timeout = IOConfig.TIMING['AUDIO_RECORD_TIMEOUT']
+        self.camera_thread_timeout = IOConfig.TIMING['CAMERA_THREAD_TIMEOUT']
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None

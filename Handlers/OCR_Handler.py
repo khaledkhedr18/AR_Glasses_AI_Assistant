@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 import pytesseract
-from utils.Config import OCR_CONFIG
+from utils.Config import OCRConfig
 from utils.Logging import Logger
 
 
@@ -10,11 +10,16 @@ class OCRHandler:
     def __init__(self):
         self.logger = Logger()
         self.logger.info("Initializing OCR Handler")
-        self.preprocessing_level = OCR_CONFIG['PREPROCESSING_LEVEL']
-        self.ocr_configs = OCR_CONFIG['OCR_MODES']
-        self.default_mode = OCR_CONFIG['DEFAULT_MODE']
-        self.save_directory = OCR_CONFIG['SAVE_DIRECTORY']
-        self.processed_frame_filename = OCR_CONFIG['PROCESSED_FRAME_FILENAME']
+
+        if not hasattr(OCRConfig, 'PROCESSING') or not hasattr(OCRConfig, 'MODES'):
+            raise ValueError("Invalid OCR configuration")
+
+        self.preprocessing_level = OCRConfig.PROCESSING.get('LEVEL', 'medium')
+        self.ocr_configs = OCRConfig.MODES
+        self.default_mode = 'DEFAULT'
+        self.save_directory = OCRConfig.STORAGE.get('SAVE_DIRECTORY', '/tmp')
+        self.processed_frame_filename = OCRConfig.STORAGE.get('PROCESSED_FRAME_FILENAME', 'frame.jpg')
+        os.makedirs(self.save_directory, exist_ok=True)
 
     def extract_text_from_frame(self, frame, lang="en", save_processed=False, mode=None):
         """
