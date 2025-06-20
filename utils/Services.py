@@ -1,18 +1,24 @@
 from fuzzywuzzy import fuzz
 from vosk import Model, KaldiRecognizer
+from Handlers.LTD_Handler import LTDHandler
 import wave
 import json
 import io
 from utils.Logging import Logger
-from utils.Config import SERVICES_CONFIG, IO_CONFIG
+from utils.Config import SERVICES_CONFIG
 
 
 class Services:
     def __init__(self):
-        self.model = Model(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
+        self.model = SERVICES_CONFIG['recognizer_model_path' + '']
         self.logger = Logger()
+        self.ltd_handler = LTDHandler()
+        self.recognizer_model_path = SERVICES_CONFIG['recognizer_model_path']
+        self.supported_lang_codes = SERVICES_CONFIG.get('supported_lang_codes', [])
+        self.languages_map = SERVICES_CONFIG.get('languages_map', {})
 
-    def recognize_text_from_speech(self, wave_data, language=None):
+
+    def recognize_text_from_speech(self, wave_data, model_path=SERVICES_CONFIG['recognizer_model_path']):
         """
         Convert WAV audio data to text using Vosk.
         Args:
@@ -29,6 +35,7 @@ class Services:
                 buffer = io.BytesIO(wave_data)
                 wf = wave.open(buffer, "rb")
 
+            self.model = Model(model_path)
             with wf:
                 recognizer = KaldiRecognizer(self.model, wf.getframerate())
                 text = ""
@@ -110,4 +117,36 @@ class Services:
         else:
             self.logger.warning(f"No match found above threshold ({confidence_threshold}%)")
             return None
+
+    def get_language_code(self, language):
+        """
+        Convert language name to standardized code.
+
+        Args:
+            language (str): Language name (e.g. 'english') or code (e.g. 'en')
+
+        Returns:
+            str: Standardized language code if valid, None otherwise
+        """
+
+        if not language:
+            self.logger.error("Empty language input")
+            return None
+
+        # Convert input to lowercase for consistency
+        language = language.lower().strip()
+
+        # Case 1: Input is already a valid language code
+        if language in self.supported_lang_codes:
+            self.logger.debug(f"Valid language code: {language}")
+            return language
+
+        # Case 2: Input is a language name that needs to be mapped to code
+        if language in self.languages_map:
+            code = self.languages_map[language]
+            self.logger.debug(f"Mapped {language} to code: {code}")
+            return code
+
+        self.logger.warning(f"Unsupported language: {language}")
+        return None
 

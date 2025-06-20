@@ -9,11 +9,12 @@ Network_Manager/
 #/Handlers/OCR_Handler.py
 #/Handlers/Translation_Handler.py
 #/Managers/LLM_Manager.py
+#/utils/Services.py
 /Managers/Network_Manager.py
 /Handlers/Audio_Handler.py
 /utils/WorkerThread.py
 /utils/Kaldi_Recognizer.py
-#/utils/Services.py
 /LLM_Manager.py
+/LLM_Manager_Temp.py
 
 

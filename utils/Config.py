@@ -60,29 +60,11 @@ IO_CONFIG = {
         'exit': ['exit', 'quit', 'close', 'leave']
     },
 
-    # Models Paths
-    'RECOGNIZER_MODEL_PATH': r"/path/to/kaldi/model",
 }
 
-# Services Configuration
-SERVICES_CONFIG = {
-    # FuzzyWuzzy confidence_threshold
-    'FUZZY_CONFIDENCE_THRESHOLD': 75,
-
-}
 # LLM Configuration
 LLM_CONFIG = {
-# Supported languages codes
-    'SUPPORTED_LANG_CODES': {
-        ["en", "ar", "fr"]
-    },
 
-# Supported languages mapping
-    'LANGUAGES_MAP': {
-        'arabic': 'ar',
-        'english': 'en',
-        'french': 'fr',
-    },
 
 # Supported  modes mapping
     'PROMPTS_SUPPORTED' : {
@@ -97,8 +79,8 @@ OCR_CONFIG = {
     'DEFAULT_MODE': 'default',
     'OCR_MODES': {
         'default': '--oem 3 --psm 3',
-        'accurate': '--oem 3 --psm 6'
-    },
+        'accurate': '--oem 3 --psm 6'},
+
     'PREPROCESSING_LEVEL': 'medium',
     'SAVE_DIRECTORY': r"/tmp/AIAssistant/",
     'THRESH_VALUE': 150,
@@ -108,11 +90,37 @@ OCR_CONFIG = {
 
 # LTD Configuration
 LTD_CONFIG = {
-    'MODEL_NAME': 'Helsinki-NLP/opus-mt-en-ar',
-    'VOSK_MODELS_DIR': '/path/to/vosk/models/',
-    'SUPPORTED_LANGUAGES': ['en', 'ar', 'fr'],
+    'TRANSLATION_MODELS_DIR': '/path/to/translation/models/',
+    'MODEL_NAME': r'Helsinki-NLP/opus-mt-{source}-{target}',
     'DEFAULT_LANGUAGE': 'en',
     'MAX_LENGTH': 512,
     'BATCH_SIZE': 8,
-    'VOSK_MODELS_DIR': '/path/to/vosk/models/',
+    'MODELS_LOAD_TIMEOUT': 30,  # seconds
+}
+
+# Services Configuration
+SERVICES_CONFIG = {
+    # FuzzyWuzzy confidence_threshold
+    'FUZZY_CONFIDENCE_THRESHOLD': 75,
+
+    # Vosk model directory
+    'RECOGNIZER_MODEL_PATH': r"/path/to/kaldi/model",
+    # Recognizer model paths for different languages
+    'RECOGNIZER_MODEL_NAME':{'en': r"vosk-model-small-en-us-0.15",
+                            'ar': r"vosk-model-ar-mgb2-0.4",
+                            'fr': r"vosk-model-small-fr-0.22"},
+
+    #
+    'SUPPORTED_LANGUAGES': ['en', 'ar', 'fr'],
+    # Supported languages codes
+    'SUPPORTED_LANG_CODES': {
+        ["en", "ar", "fr"]
+    },
+
+    # Supported languages mapping
+    'LANGUAGES_MAP': {
+        'arabic': 'ar',
+        'english': 'en',
+        'french': 'fr',
+    },
 }

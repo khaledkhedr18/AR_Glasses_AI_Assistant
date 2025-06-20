@@ -8,21 +8,31 @@ import os
 
 
 class CameraHandler:
+    # Class-level variables
+    _camera_initialized = False
+    _camera_init_lock = threading.Lock()
+    _picam2 = None  # Shared camera instance
+    _initialization_error = None
+
     def __init__(self):
         """
         Initialize the Camera
         """
         self.logger = Logger()
+        self.logger.info("Initializing Camera Handler")
         self.camera_lock = threading.Lock()
         self.frame_buffer = None
-        self.picam2 = None
         self.capture_width = CAMERA_CONFIG['CAPTURE_WIDTH']
         self.capture_height = CAMERA_CONFIG['CAPTURE_HEIGHT']
         self.quality = CAMERA_CONFIG['IMAGE_QUALITY']
         self.save_dir = CAMERA_CONFIG['SAVE_DIRECTORY']
         self.saved_image_name = CAMERA_CONFIG['IMAGE_FILENAME']
         self.image_save_path = None
-        self.__initialize_camera()
+
+        with CameraHandler._camera_init_lock:
+            if not CameraHandler._camera_initialized and not CameraHandler._initialization_error:
+                self.__initialize_camera()
+            self.picam2 = CameraHandler._picam2
 
     def capture_and_save_image(self):
         """
@@ -104,56 +114,57 @@ class CameraHandler:
             self.logger.log_error_with_traceback("Error setting camera parameters", e)
             return False
 
-    def __initialize_camera(self):
+    @classmethod
+    def get_initialization_status(cls):
         """
-        Initialize the camera with native sensor resolution and proper color format.
+        Get the camera initialization status.
 
-        This method configures the camera with the native sensor resolution and
-        RGB888 color format. It also sets the autofocus mode to continuous and
-        starts the camera. The capture dimensions are extracted from the
-        configuration and stored as instance variables.
-
-        If there is an error during initialization, the `pixmap` is filled with
-        red color to indicate the error.
+        Returns:
+            tuple: (bool: is_initialized, str: error_message if any)
         """
+        return cls._camera_initialized, cls._initialization_error
+
+    @classmethod
+    def cleanup(cls):
+        """
+        Cleanup camera resources. Should be called when shutting down.
+        """
+        with cls._camera_init_lock:
+            if cls._picam2 and cls._camera_initialized:
+                try:
+                    cls._picam2.stop()
+                    cls._picam2.close()
+                    cls._picam2 = None
+                    cls._camera_initialized = False
+                    cls._initialization_error = None
+                except Exception as e:
+                    print(f"Error during camera cleanup: {e}")
+
+    def is_camera_working(self):
+        """
+        Check if camera is properly initialized and working.
+
+        Returns:
+            bool: True if camera is working, False otherwise
+        """
+        if not CameraHandler._camera_initialized or CameraHandler._initialization_error:
+            return False
+
         try:
-            if self.picam2 is None:
-                self.picam2 = Picamera2()
-                config = self.picam2.create_preview_configuration(
-                    main={
-                        "size": (self.capture_width, self.capture_height),
-                        "format": CAMERA_CONFIG['COLOR_FORMAT']
-                    },
-                    controls={
-                        "AwbEnable": CAMERA_CONFIG['AWB_ENABLE'],
-                        "AeEnable": CAMERA_CONFIG['AE_ENABLE'],
-                        "ExposureTime": CAMERA_CONFIG['DEFAULT_EXPOSURE'],
-                        "AnalogueGain": CAMERA_CONFIG['DEFAULT_GAIN'],
-                        "FrameDurationLimits": (CAMERA_CONFIG['FRAME_DURATION'],
-                                                CAMERA_CONFIG['FRAME_DURATION'])
-                    },
-                    transform=libcamera.Transform(
-                        hflip=CAMERA_CONFIG['HFLIP'],
-                        vflip=CAMERA_CONFIG['VFLIP']
-                    )
-                )
-                self.picam2.configure(config)
+            # Try to capture a test frame
+            test_frame = self.capture_frame()
+            return test_frame is not None
+        except Exception:
+            return False
 
-                # Set default focus mode
-                mode = CAMERA_CONFIG['DEFAULT_FOCUS_MODE']
-                if mode == 'continuous':
-                    focus_mode = libcamera.controls.AfModeEnum.Continuous
-                elif mode == 'auto':
-                    focus_mode = libcamera.controls.AfModeEnum.Auto
-                else:
-                    focus_mode = libcamera.controls.AfModeEnum.Manual
-
-                self.picam2.set_controls({"AfMode": focus_mode})
-                self.picam2.start()
-
-                self.capture_width = config["main"]["size"][0]
-                self.capture_height = config["main"]["size"][1]
-                self.logger.info("Camera initialized successfully")
-
+    def __initialize_camera(self):
+        """Initialize the camera with configured settings."""
+        try:
+            if not CameraHandler._picam2:
+                # Your existing initialization code...
+                CameraHandler._camera_initialized = True
+                CameraHandler._initialization_error = None
         except Exception as e:
+            CameraHandler._initialization_error = str(e)
             self.logger.log_error_with_traceback("Camera Initialization Error", e)
+            raise

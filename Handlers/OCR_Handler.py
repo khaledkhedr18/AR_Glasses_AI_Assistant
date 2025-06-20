@@ -53,15 +53,15 @@ class OCRHandler:
             return True
         return False
 
-    def _preprocess_image(self, img):
+    def _preprocess_image(self, frame):
         """
         Preprocess image array for better OCR results.
         """
         try:
-            if len(img.shape) == 3:
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if len(frame.shape) == 3:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             else:
-                gray = img
+                gray = frame
 
             if self.preprocessing_level == "low":
                 return gray

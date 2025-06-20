@@ -1,24 +1,27 @@
 from Handlers.GUI_Handler import GUIHandler
 from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
-from utils.Logging import Logger
-from utils.Config import IO_CONFIG, LLM_CONFIG
 from utils.Services import Services
+from utils.Config import IO_CONFIG, SERVICES_CONFIG
 import threading
 import time
+from utils.Logging import Logger
 
 
+# This module handles all I/O operations including camera, audio, and GUI interactions.
 class IOManager:
     def __init__(self):
+        self.logger = Logger()
+        self.logger.info("Initializing IO Handler")
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.Services = Services()
         self.logger = Logger()
         self.wake_word = IO_CONFIG['WAKE_WORD']
-        self.supported_languages = LLM_CONFIG['LANGUAGES_MAP']
         self.mode_keywords = IO_CONFIG['MODE_KEYWORDS']
         self.audio_record_timeout = IO_CONFIG['AUDIO_RECORD_TIMEOUT']
+        self.supported_languages = SERVICES_CONFIG['LANGUAGES_MAP']
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None
