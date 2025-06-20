@@ -11,7 +11,6 @@ from utils.Config import SERVICES_CONFIG
 class Services:
     def __init__(self):
         self.logger = Logger()
-        self.ltd_handler = LTDHandler()
         self.recognizer_model_path = SERVICES_CONFIG['recognizer_model_path']
         self.supported_lang_codes = SERVICES_CONFIG.get('supported_lang_codes', [])
         self.languages_map = SERVICES_CONFIG.get('languages_map', {})

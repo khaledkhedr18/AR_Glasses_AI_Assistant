@@ -65,7 +65,6 @@ IO_CONFIG = {
 # LLM Configuration
 LLM_CONFIG = {
 
-
 # Supported  modes mapping
     'PROMPTS_SUPPORTED' : {
         'translate': "tr",

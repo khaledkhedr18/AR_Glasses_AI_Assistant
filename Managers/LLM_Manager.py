@@ -68,54 +68,23 @@ class LLMManager:
         """
         self.logger.info(f"Starting translation with mode: {user_config['translation_mode']}")
 
-        # Initialize and validate basic requirements
-        model_setup = self.__initialize_translation_setup(user_config)
-        if not model_setup:
-            return None
-
-        src_lang_code, dest_lang_code, translation_model_components = model_setup
-
-        # Get speech model components if needed
-        speech_model_components = None
-        if user_config['translation_mode'] in ['speech', 'both']:
-            speech_model_components = self.ltd_handler.get_speech_model(src_lang_code)
-            if not speech_model_components[1]:  # Check success flag
-                self.logger.error("Failed to load speech recognition model")
+        try:
+            # Validate and setup models
+            models_setup = self.__setup_translation_environment(user_config)
+            if not models_setup:
                 return None
 
-        result = self.__create_result_template()
+            # Process the input based on mode
+            result = self.__process_input_by_mode(user_config['translation_mode'], input_data, models_setup)
+            if not result:
+                return None
 
-        try:
-            # Process based on translation mode
-            if user_config['translation_mode'] == 'image':
-                result = self.__handle_image_mode(
-                    input_data,
-                    src_lang_code,
-                    translation_model_components
-                )
-
-            elif user_config['translation_mode'] == 'speech':
-                result = self.__handle_speech_mode(
-                    input_data,
-                    src_lang_code,
-                    translation_model_components,
-                    speech_model_components
-                )
-
-            elif user_config['translation_mode'] == 'both':
-                result = self.__handle_both_mode(
-                    input_data,
-                    src_lang_code,
-                    translation_model_components,
-                    speech_model_components
-                )
+            self.logger.info("Translation completed successfully")
+            return result
 
         except Exception as e:
             self.logger.error(f"Translation failed: {str(e)}")
             return None
-
-        self.logger.info("Translation completed" if result['success'] else "Translation failed")
-        return result if result['success'] else None
 
     def get_all_translations(self):
         """
@@ -145,69 +114,84 @@ class LLMManager:
         """
         return self.active_translations.get(index)
 
-    def __initialize_translation_setup(self, user_config):
+    def __setup_translation_environment(self, user_config):
         """
-        Initialize and validate translation setup.
+        Setup and validate the translation environment including models.
 
         Args:
-            user_config (dict): User configuration containing source and target languages
+            user_config (dict): User configuration with language settings
 
         Returns:
-            tuple: (source_lang_code, dest_lang_code, model_components) or None if initialization fails
+            tuple: (src_code, dest_code, translation_model, speech_model) or None if setup fails
         """
-        src_lang_code = self.service.get_language_code(user_config['source_lang'])
-        dest_lang_code = self.service.get_language_code(user_config['dest_lang'])
+        # Get language codes
+        src_code = self.service.get_language_code(user_config['source_lang'])
+        dest_code = self.service.get_language_code(user_config['dest_lang'])
 
-        if not src_lang_code or not dest_lang_code:
+        if not src_code or not dest_code:
             self.logger.error("Invalid language configuration")
             return None
 
-        model_components = self.ltd_handler.get_translation_model(src_lang_code, dest_lang_code)
-        if not model_components or not model_components[0]:
-            self.logger.error("Failed to retrieve translation model components")
+        # Get translation model
+        translation_model = self.ltd_handler.get_translation_model(src_code, dest_code)
+        if not translation_model or not translation_model[0]:
+            self.logger.error("Failed to load translation model")
             return None
 
-        return src_lang_code, dest_lang_code, model_components
+        # Get speech model if needed
+        speech_model = None
+        if user_config['translation_mode'] in ['speech', 'both']:
+            speech_model = self.ltd_handler.get_speech_model(src_code)
+            if not speech_model or not speech_model[0]:
+                self.logger.error("Failed to load speech model")
+                return None
 
-    def __create_result_template(self):
-        """
-        Create template for translation results.
+        return src_code, dest_code, translation_model, speech_model
 
-        Returns:
-            dict: Empty result template with default values
+    def __process_input_by_mode(self, mode, input_data, models_setup):
         """
-        return {
-            'success': False,
-            'operation_type': None,
-            'original_text': '',
-            'translated_text': '',
-            'extracted_text': None,
-            'storage_index': None
-        }
-
-    def __handle_image_mode(self, input_data, src_lang_code, model_components):
-        """
-        Handle image-only translation mode.
+        Process input based on translation mode.
 
         Args:
-            input_data (numpy.ndarray): Array of pixels from capture_array()
-            src_lang_code (str): Source language code
-            model_components (tuple): Translation model components
+            mode (str): Translation mode
+            input_data: Input data to process
+            models_setup (tuple): (src_code, dest_code, translation_model, speech_model)
 
         Returns:
-            dict: Translation results
+            dict: Translation results or None if processing fails
         """
+        src_code, _, translation_model, speech_model = models_setup
+
+        try:
+            if mode == 'image':
+                return self.__process_image_input(input_data, src_code, translation_model)
+            elif mode == 'speech':
+                return self.__process_speech_input(input_data, speech_model, translation_model)
+            elif mode == 'both':
+                return self.__process_combined_input(input_data, src_code, speech_model, translation_model)
+            else:
+                self.logger.error(f"Invalid mode: {mode}")
+                return None
+        except ValueError as ve:
+            self.logger.error(f"Input validation error: {str(ve)}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Processing error: {str(e)}")
+            return None
+
+    def __process_image_input(self, input_data, src_code, translation_model):
+        """Handle image-only translation."""
         if not isinstance(input_data, np.ndarray):
-            raise ValueError("Image mode requires array of pixels from capture_array()")
+            raise ValueError("Image mode requires array of pixels")
 
         result = self.__create_result_template()
-        extracted_text = self.ocr_handler.extract_text_from_frame(input_data, src_lang_code)
+        extracted_text = self.ocr_handler.extract_text_from_frame(input_data, src_code)
 
         if extracted_text:
             result['original_text'] = extracted_text
             result['translated_text'] = self.translation_handler.translate_text(
                 extracted_text,
-                model_components
+                translation_model
             )
             result['operation_type'] = 'translation'
             result['success'] = True
@@ -215,33 +199,19 @@ class LLMManager:
 
         return result
 
-    def __handle_speech_mode(self, input_data, src_lang_code, translation_model_components, speech_model_components):
-        """
-        Handle speech-only translation mode.
-
-        Args:
-            input_data (numpy.ndarray): Audio wave chunks
-            src_lang_code (str): Source language code
-            translation_model_components (tuple): Translation model components
-            speech_model_components (tuple): Speech recognition model components
-
-        Returns:
-            dict: Translation results
-        """
+    def __process_speech_input(self, input_data, speech_model, translation_model):
+        """Handle speech-only translation."""
         if not isinstance(input_data, np.ndarray):
             raise ValueError("Speech mode requires numpy array of audio chunks")
 
         result = self.__create_result_template()
-        recognized_text = self.service.recognize_text_from_speech(
-            input_data,
-            speech_model_components
-        )
+        recognized_text = self.service.recognize_text_from_speech(input_data, speech_model)
 
         if recognized_text:
             result['original_text'] = recognized_text
             translated_text = self.translation_handler.translate_text(
                 recognized_text,
-                translation_model_components
+                translation_model
             )
             if translated_text:
                 result['translated_text'] = translated_text
@@ -250,29 +220,19 @@ class LLMManager:
 
         return result
 
-    def __handle_both_mode(self, input_data, src_lang_code, model_components):
-        """
-        Handle combined image and speech translation mode.
-
-        Args:
-            input_data (tuple): (frame_array, audio_chunks)
-            src_lang_code (str): Source language code
-            model_components (tuple): Translation model components
-
-        Returns:
-            dict: Translation results
-        """
+    def __process_combined_input(self, input_data, src_code, speech_model, translation_model):
+        """Handle combined image and speech translation."""
         if not isinstance(input_data, tuple) or len(input_data) != 2:
-            raise ValueError("Both mode requires tuple of (frame_array, audio_chunks)")
+            raise ValueError("Combined mode requires tuple of (frame_array, audio_chunks)")
 
         frame_array, audio_chunks = input_data
         if not isinstance(frame_array, np.ndarray) or not isinstance(audio_chunks, np.ndarray):
-            raise ValueError("Both inputs must be numpy arrays")
+            raise ValueError("Invalid input data types")
 
         result = self.__create_result_template()
 
         # Process speech command
-        recognized_text = self.service.recognize_text_from_speech(audio_chunks, src_lang_code)
+        recognized_text = self.service.recognize_text_from_speech(audio_chunks, speech_model)
         if not recognized_text:
             return result
 
@@ -280,35 +240,23 @@ class LLMManager:
         command = self.service.verify_user_input(recognized_text, self.prompts_supported)
 
         # Process image
-        extracted_text = self.ocr_handler.extract_text_from_frame(frame_array, src_lang_code)
+        extracted_text = self.ocr_handler.extract_text_from_frame(frame_array, src_code)
         if not extracted_text:
             return result
 
         result['extracted_text'] = extracted_text
 
         if command == "tr":
-            return self.__process_translation_command(extracted_text, model_components)
+            return self.__handle_translation_command(extracted_text, translation_model)
         elif command == "ex":
-            return self.__process_extraction_command(extracted_text, src_lang_code)
+            return self.__handle_extraction_command(extracted_text, src_code)
 
         return result
 
-    def __process_translation_command(self, extracted_text, model_components):
-        """
-        Process translation command in both mode.
-
-        Args:
-            extracted_text (str): Text extracted from image
-            model_components (tuple): Translation model components
-
-        Returns:
-            dict: Translation results
-        """
+    def __handle_translation_command(self, extracted_text, translation_model):
+        """Process translation command in combined mode."""
         result = self.__create_result_template()
-        translated_text = self.translation_handler.translate_text(
-            extracted_text,
-            model_components
-        )
+        translated_text = self.translation_handler.translate_text(extracted_text, translation_model)
 
         if translated_text:
             result['translated_text'] = translated_text
@@ -318,23 +266,14 @@ class LLMManager:
 
         return result
 
-    def __process_extraction_command(self, extracted_text, src_lang_code):
-        """
-        Process extraction command in both mode.
-
-        Args:
-            extracted_text (str): Text extracted from image
-            src_lang_code (str): Source language code
-
-        Returns:
-            dict: Extraction results
-        """
+    def __handle_extraction_command(self, extracted_text, src_code):
+        """Process extraction command in combined mode."""
         result = self.__create_result_template()
 
         self.active_translations[self.translation_counter] = {
             'text': extracted_text,
             'timestamp': datetime.now(),
-            'source_lang': src_lang_code
+            'source_lang': src_code
         }
 
         result['storage_index'] = self.translation_counter
@@ -344,3 +283,14 @@ class LLMManager:
 
         self.translation_counter += 1
         return result
+
+    def __create_result_template(self):
+        """Create empty result template."""
+        return {
+            'success': False,
+            'operation_type': None,
+            'original_text': '',
+            'translated_text': '',
+            'extracted_text': None,
+            'storage_index': None
+        }
