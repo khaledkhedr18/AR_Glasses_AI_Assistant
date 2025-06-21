@@ -2,7 +2,7 @@ from utils.Logging import Logger
 from Handlers.OCR_Handler import OCRHandler
 from Handlers.Translation_Handler import TranslationHandler
 from Handlers.LTD_Handler import LTDHandler
-from utils.Config import LLM_CONFIG, SERVICES_CONFIG
+from utils.Config import ServicesConfig, LLMConfig
 from utils.Services import Services
 import numpy as np
 from datetime import datetime
@@ -42,9 +42,7 @@ class LLMManager:
         self.ocr_batch_size = 1024  # bytes
         self.translation_batch_size = 2048  # characters
 
-        self.supported_lang_codes = SERVICES_CONFIG['SUPPORTED_LANG_CODES']
-        self.supported_languages = SERVICES_CONFIG['LANGUAGES_MAP']
-        self.prompts_supported = LLM_CONFIG['PROMPTS_SUPPORTED']
+        self.prompts_supported = LLMConfig.PROMPTS['SUPPORTED']
 
         self.logger.info("LLM_Manager initialized successfully")
 
