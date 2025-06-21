@@ -2,7 +2,7 @@ from Handlers.GUI_Handler import GUIHandler
 from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
 from utils.Services import Services
-from utils.Config import IOConfig
+from utils.Config import IOConfig, ServicesConfig
 import time
 from utils.Logging import Logger
 import threading
@@ -13,6 +13,7 @@ class IOManager:
     def __init__(self):
         self.logger = Logger()
         self.logger.info("Initializing IO Handler")
+        self.Services = Services()
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
@@ -23,6 +24,7 @@ class IOManager:
         self.command_keywords = IOConfig.KEYWORDS['COMMANDS']
         self.audio_record_timeout = IOConfig.TIMING['AUDIO_RECORD_TIMEOUT']
         self.camera_thread_timeout = IOConfig.TIMING['CAMERA_THREAD_TIMEOUT']
+        self.supported_languages = ServicesConfig.LANGUAGES['MAPPING']
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None
@@ -51,9 +53,9 @@ class IOManager:
                 self.logger.info("Stopping camera stream")
                 self.camera_running = False  # This will break the while loop in __stream_camera
                 if self.camera_thread and self.camera_thread.is_alive():
-                    self.camera_thread.join(timeout=IO_CONFIG['CAMERA_THREAD_TIMEOUT'])  # Wait up to configurable seconds for thread to finish
+                    self.camera_thread.join(timeout=IOConfig.TIMING['CAMERA_THREAD_TIMEOUT'])  # Wait up to configurable seconds for thread to finish
                     self.logger.info("Camera thread stopped")
-                self.gui.delete_overlay_widget(IO_CONFIG['CAMERA_WINDOW_NAME'])
+                self.gui.delete_overlay_widget(IOConfig.INTERFACE['CAMERA'])
                 self.camera_thread = None
                 self.frame_captured = None
             else:
@@ -101,7 +103,7 @@ class IOManager:
 
                 if mode in ["display", "both"]:
                     self.logger.info(f"AI: {text}")
-                    self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], text)
+                    self.gui.display_text_in_widget(IOConfig.INTERFACE['AI'], text)
 
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in user interaction", e)
@@ -111,7 +113,7 @@ class IOManager:
         Interactive configuration through voice conversation with AI agent
         Returns: dict with source_lang, dest_lang, and translation_mode
         """
-        max_attempts = IO_CONFIG['MAX_ATTEMPTS']  # Maximum number of retry attempts
+        max_attempts = IOConfig.INTERFACE['MAX_ATTEMPTS']  # Maximum number of retry attempts
 
         config = {
             'source_lang': None,
@@ -123,7 +125,7 @@ class IOManager:
             """
             Waits for the user to say the wake word to start configuration
             """
-            prompt = f"Please say the wake word '{IO_CONFIG['WAKE_WORD']}' to start configuration."
+            prompt = f"Please say the wake word '{IOConfig.INTERFACE['WAKE_WORD']}' to start configuration."
             self.logger.info(prompt)
             self.interact_with_user(prompt)
 
@@ -136,24 +138,9 @@ class IOManager:
 
             return False
 
-        def get_language_input(prompt):
+        def get_user_input(prompt):
             """
-            Asks user for a language input and returns the recognized language code
-            """
-            self.logger.info(prompt)
-            self.interact_with_user(prompt)
-
-            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
-            if not self.recorded_audio:
-                return None
-            text = self.Services.recognize_text_from_speech(self.recorded_audio)
-            if text:
-                return self.Services.verify_user_input(text, self.supported_languages)
-            return None
-
-        def get_translation_mode(prompt):
-            """
-            Asks user for translation mode (speech, image, or both) and returns the selected mode
+            Asks user for language input or translation mode (speech, image, or both) and returns the selected mode or recognized language code
             """
             self.logger.info(prompt)
             self.interact_with_user(prompt)
@@ -188,21 +175,21 @@ class IOManager:
         self.interact_with_user(message)
 
         # Get source language
-        source_lang = retry_input(get_language_input, "What is the source language?")
+        source_lang = retry_input(get_user_input, "What is the source language?")
         if not source_lang:
             self.logger.error("Failed to recognize source language after multiple attempts")
             return None
         config['source_lang'] = source_lang
 
         # Get target language
-        dest_lang = retry_input(get_language_input, "What is the target language?")
+        dest_lang = retry_input(get_user_input, "What is the target language?")
         if not dest_lang:
             self.logger.error("Failed to recognize destination language after multiple attempts")
             return None
         config['dest_lang'] = dest_lang
 
         # Get translation mode
-        translation_mode = retry_input(get_translation_mode, "What do you want to translate? (speech, image, or image with prompt)")
+        translation_mode = retry_input(get_user_input, "What do you want to translate? (speech, image, or image with prompt)")
         if not translation_mode:
             self.logger.error("Failed to recognize translation mode after multiple attempts")
             return None
@@ -236,7 +223,7 @@ class IOManager:
             self.logger.info(f"Recognized command: {text}")
 
             # Check for command keywords
-            for command, keywords in IO_CONFIG['COMMAND_KEYWORDS'].items():
+            for command, keywords in IOConfig.KEYWORDS['COMMANDS'].items():
                 if any(keyword in text for keyword in keywords):
                     return command
 
@@ -330,8 +317,8 @@ class IOManager:
                 if not self.camera_running:  # Double check in case flag changed
                     break
                 self.frame_captured = self.camera.capture_frame()
-                self.gui.display_image_in_widget(IO_CONFIG['CAMERA_WINDOW_NAME'], self.frame_captured)
-                time.sleep(IO_CONFIG['FRAME_INTERVAL'])  # 30ms interval
+                self.gui.display_image_in_widget(IOConfig.INTERFACE['CAMERA'], self.frame_captured)
+                time.sleep(IOConfig.INTERFACE['FRAME_INTERVAL'])  # 30ms interval
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in camera stream", e)
                 self.camera_running = False  # Ensure we exit on error

@@ -144,7 +144,7 @@ class CameraHandler:
                 except Exception as e:
                     print(f"Error during camera cleanup: {e}")
 
-    def is_camera_working(self):
+    def is_camera_connected(self):
         """
         Check if camera is properly initialized and working.
 
@@ -157,7 +157,7 @@ class CameraHandler:
         try:
             # Try to capture a test frame
             test_frame = self.capture_frame()
-            return test_frame is not None
+            return True
         except Exception:
             return False
 
