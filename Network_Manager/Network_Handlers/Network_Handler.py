@@ -3,6 +3,8 @@ import json
 import base64
 import time
 import datetime
+from utils.config import NETWORK_CONFIG
+from utils.logging import Logger
 
 class Network_Handler:
     """
@@ -10,61 +12,88 @@ class Network_Handler:
     and data transmission for online services.
     """
 
-    def __init__(self, server_ip='192.168.1.65', server_port=4040):
+    def __init__(self, server_ip=None, server_port=None):
         """
         Initialize the Network_Handler.
 
         Args:
-            server_ip (str): IP address of the translation server
-            server_port (int): Port number of the translation server
+            server_ip (str, optional): IP address of the translation server
+            server_port (int, optional): Port number of the translation server
         """
-        super().__init__()
-        self.SERVER_IP = server_ip
-        self.SERVER_PORT = server_port
+        self.logger = Logger()
+
+        # Use provided values or fall back to config
+        self.SERVER_IP = server_ip or NETWORK_CONFIG.get('SERVER_IP', '192.168.1.65')
+        self.SERVER_PORT = server_port or NETWORK_CONFIG.get('SERVER_PORT', 4040)
+        self.SOCKET_TIMEOUT = NETWORK_CONFIG.get('SOCKET_TIMEOUT', 5)
+        self.MAX_RETRIES = NETWORK_CONFIG.get('MAX_RETRIES', 3)
+        self.RETRY_DELAY = NETWORK_CONFIG.get('RETRY_DELAY', 1)
+        self.REQUEST_TIMEOUT = NETWORK_CONFIG.get('REQUEST_TIMEOUT', 30)
+        self.RESPONSE_TIMEOUT = NETWORK_CONFIG.get('RESPONSE_TIMEOUT', 30)
+        self.CHUNK_SIZE = NETWORK_CONFIG.get('CHUNK_SIZE', 4096)
+
         self.sock = None
         self.file_obj = None
         self.connected = False
 
-    def check_internet_connection(self, timeout=2):
+        self.logger.info(f"Network_Handler initialized with server {self.SERVER_IP}:{self.SERVER_PORT}")
+
+    def check_internet_connection(self, timeout=None):
         """
         Check if the device is connected to the internet.
 
         Args:
-            timeout (float): Connection timeout in seconds
+            timeout (float, optional): Connection timeout in seconds
 
         Returns:
             bool: True if connected, False otherwise
         """
-        try:
-            sock = socket.create_connection(("www.google.com", 80), timeout=timeout)
-            sock.close()
-            return True
-        except (socket.error, OSError):
-            return False
+        if timeout is None:
+            timeout = NETWORK_CONFIG.get('STATUS_CHECK_TIMEOUT', 2.0)
 
-    def connect_to_server(self, max_retries=2):
+        # Try multiple URLs from config
+        urls = NETWORK_CONFIG.get('STATUS_CHECK_URLS', ['www.google.com'])
+        port = NETWORK_CONFIG.get('STATUS_CHECK_PORT', 80)
+
+        for url in urls:
+            try:
+                self.logger.debug(f"Checking internet connection using {url}...")
+                sock = socket.create_connection((url, port), timeout=timeout)
+                sock.close()
+                return True
+            except (socket.error, OSError) as e:
+                self.logger.debug(f"Connection to {url} failed: {e}")
+                continue
+
+        return False
+
+    def connect_to_server(self, max_retries=None):
         """
         Connect to the translation server.
 
         Args:
-            max_retries (int): Maximum number of connection attempts
+            max_retries (int, optional): Maximum number of connection attempts
 
         Returns:
             bool: True if connection successful, False otherwise
         """
+        if max_retries is None:
+            max_retries = self.MAX_RETRIES
+
         for attempt in range(max_retries):
             try:
-                print(f"Connecting to {self.SERVER_IP}:{self.SERVER_PORT}...")
-                self.sock = socket.create_connection((self.SERVER_IP, self.SERVER_PORT), timeout=5)
+                self.logger.info(f"Connecting to {self.SERVER_IP}:{self.SERVER_PORT} (attempt {attempt+1}/{max_retries})...")
+                self.sock = socket.create_connection((self.SERVER_IP, self.SERVER_PORT),
+                                                    timeout=self.SOCKET_TIMEOUT)
                 self.file_obj = self.sock.makefile('r')
                 self.connected = True
-                print("Connection established")
+                self.logger.info("Connection established")
                 return True
             except (ConnectionRefusedError, OSError) as e:
-                print(f"Connection error: {e}. Retrying...")
-                time.sleep(1)
+                self.logger.warning(f"Connection error: {e}. Retrying...")
+                time.sleep(self.RETRY_DELAY)
 
-        print("Failed to connect to server")
+        self.logger.error("Failed to connect to server")
         return False
 
     def disconnect_from_server(self):
@@ -112,7 +141,7 @@ class Network_Handler:
             return response
 
         except Exception as e:
-            print(f"Communication error: {e}")
+            self.logger.error(f"Communication error: {e}")
             self.disconnect_from_server()
             return None
 
@@ -143,7 +172,7 @@ class Network_Handler:
             self.sock.sendall(data.encode('utf-8'))
             return True
         except Exception as e:
-            print(f"Error sending text: {e}")
+            self.logger.error(f"Error sending text: {e}")
             self.connected = False
             return False
 
@@ -178,7 +207,7 @@ class Network_Handler:
             self.sock.sendall(data.encode('utf-8'))
             return True
         except Exception as e:
-            print(f"Error sending image: {e}")
+            self.logger.error(f"Error sending image: {e}")
             self.connected = False
             return False
 
@@ -211,41 +240,44 @@ class Network_Handler:
             self.sock.sendall(data.encode('utf-8'))
             return True
         except Exception as e:
-            print(f"Error sending combined data: {e}")
+            self.logger.error(f"Error sending combined data: {e}")
             return False
 
-    def receive_response(self, timeout=10):
+    def receive_response(self, timeout=None):
         """
         Receive a response from the server.
 
         Args:
-            timeout (int): Maximum wait time in seconds
+            timeout (int, optional): Maximum wait time in seconds
 
         Returns:
             str or None: Server response if received, None otherwise
         """
         import select
 
+        if timeout is None:
+            timeout = self.RESPONSE_TIMEOUT
+
         self.sock.setblocking(0)
         ready = select.select([self.sock], [], [], timeout)
         if ready[0]:
             try:
-                data = self.sock.recv(4096).decode('utf-8')
+                data = self.sock.recv(self.CHUNK_SIZE).decode('utf-8')
                 if data:
                     try:
                         message = json.loads(data)
                         return message.get("data")
                     except json.JSONDecodeError:
-                        print("Received invalid JSON.")
+                        self.logger.error("Received invalid JSON.")
                         return None
                 else:
-                    print("No data received.")
+                    self.logger.warning("No data received.")
                     return None
             except socket.error as e:
-                print(f"Socket error: {e}")
+                self.logger.error(f"Socket error: {e}")
                 return None
         else:
-            print("No response received within timeout period.")
+            self.logger.warning(f"No response received within timeout period ({timeout}s).")
             return None
 
     def cleanup(self):

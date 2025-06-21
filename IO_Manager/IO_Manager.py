@@ -123,25 +123,65 @@ class IOManager:
             self.logger.warning("Camera not running, cannot capture image")
             return None
 
-    def start_audio_listening(self):
+    def start_audio_listening(self, mode="offline"):
+        """
+        Start listening for audio input.
+
+        Args:
+            mode (str): "online" to save to file, "offline" to keep in memory
+
+        Returns:
+            bool: True if started successfully
+        """
         with self.audio_lock:
             if not self.audio_running:
-                self.logger.info("Starting audio recording")
-                self.audio.start_recording()
-                self.audio_running = True
+                self.logger.info(f"Starting audio recording in {mode} mode")
+                success = self.audio.start_recording(mode)
+                if success:
+                    self.audio_running = True
+                return success
+            return False
 
     def stop_audio_listening(self):
+        """
+        Stop listening for audio input.
+
+        Returns:
+            Audio data or file path depending on recording mode
+        """
         with self.audio_lock:
             if self.audio_running:
                 self.logger.info("Stopping audio recording")
-                self.recorded_audio = self.audio.stop_recording()
+                audio_result = self.audio.stop_recording()
                 self.audio_running = False
+                return audio_result
+            return None
 
-    def get_user_audio(self):
+    def get_user_audio(self, mode="offline", duration=5):
+        """
+        Get user audio synchronously.
+
+        Args:
+            mode (str): "online" to save to file, "offline" to return data
+            duration (int): Recording duration in seconds
+
+        Returns:
+            Audio data (offline) or file path (online)
+        """
         with self.audio_lock:
             if self.audio_running:
-                return self.recorded_audio
-            return None
+                self.logger.warning("Audio recording already in progress")
+                return None
+
+            # Start recording
+            if not self.start_audio_listening(mode):
+                return None
+
+            # Wait for the specified duration
+            time.sleep(duration)
+
+            # Stop recording and get the result
+            return self.stop_audio_listening()
 
     def interact_with_user(self, text, mode="both"):
         """

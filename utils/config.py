@@ -116,6 +116,40 @@ IO_CONFIG = {
     'RECOGNIZER_MODEL_PATH': r"/path/to/kaldi/model",
 }
 
+# Network Manager Configuration
+NETWORK_CONFIG = {
+    # Server connection settings
+    'SERVER_IP': '192.168.1.65',
+    'SERVER_PORT': 4040,
+    'SOCKET_TIMEOUT': 5,  # seconds
+    'MAX_RETRIES': 3,
+    'RETRY_DELAY': 1,  # seconds
+    'CONNECTION_CHECK_INTERVAL': 10,  # seconds
+
+    # Request settings
+    'REQUEST_TIMEOUT': 30,  # seconds
+    'MAX_PAYLOAD_SIZE': 10 * 1024 * 1024,  # 10MB max payload size
+    'CHUNK_SIZE': 4096,  # bytes
+
+    # Supported data types
+    'DATA_TYPES': ['text', 'image', 'text_and_image'],
+
+    # Response settings
+    'RESPONSE_TIMEOUT': 30,  # seconds
+
+    # Status checks
+    'STATUS_CHECK_URLS': ['https://www.google.com', 'https://www.cloudflare.com'],
+    'STATUS_CHECK_PORT': 80,
+    'STATUS_CHECK_TIMEOUT': 2.0,  # seconds
+
+    # Threading
+    'THREAD_JOIN_TIMEOUT': 1.0,  # seconds
+
+    # Debug options
+    'VERBOSE_LOGGING': False,
+    'LOG_PAYLOADS': False,  # Be careful with this in production!
+}
+
 user_config = {
     "source_language": "english",
     "target_language": "arabic",
