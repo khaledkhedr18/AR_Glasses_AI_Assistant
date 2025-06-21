@@ -3,8 +3,8 @@ from vosk import Model, KaldiRecognizer
 import wave
 import json
 import io
-from utils.Logging import Logger
 from utils.Config import ServicesConfig
+from utils.Logging import Logger
 
 
 class Services:

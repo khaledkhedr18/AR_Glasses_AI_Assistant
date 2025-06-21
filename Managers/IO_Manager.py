@@ -3,9 +3,9 @@ from Handlers.Camera_Handler import CameraHandler
 from Handlers.Audio_Handler import AudioHandler
 from utils.Services import Services
 from utils.Config import IOConfig
-import threading
 import time
 from utils.Logging import Logger
+import threading
 
 
 # This module handles all I/O operations including camera, audio, and GUI interactions.

@@ -1,11 +1,11 @@
-from utils.Logging import Logger
 from Handlers.OCR_Handler import OCRHandler
 from Handlers.Translation_Handler import TranslationHandler
 from Handlers.LTD_Handler import LTDHandler
-from utils.Config import ServicesConfig, LLMConfig
+from utils.Config import LLMConfig
 from utils.Services import Services
 import numpy as np
 from datetime import datetime
+from utils.Logging import Logger
 import threading
 
 
@@ -31,16 +31,9 @@ class LLMManager:
         self.ocr_handler = OCRHandler()
         self.service = Services()
 
-        # Mutex lock for thread-safe model loading
-        self._model_lock = threading.Lock()
-
         # Model and resource caches
         self.active_translations = {}
         self.translation_counter = 0
-
-        # Performance settings
-        self.ocr_batch_size = 1024  # bytes
-        self.translation_batch_size = 2048  # characters
 
         self.prompts_supported = LLMConfig.PROMPTS['SUPPORTED']
 

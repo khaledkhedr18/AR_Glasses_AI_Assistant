@@ -88,35 +88,45 @@ class OCRConfig:
 
 class LTDConfig:
     TRANSLATION = {
-        'TRANSLATION_MODELS_DIR': '/path/to/translation/models/',
-        'DEFAULT_LANGUAGE': 'en',
-        'MAX_LENGTH': 512,
-        'BATCH_SIZE': 8,
-        'MODELS_LOAD_TIMEOUT': 30
+        'TRANSLATION_MODELS_DIR': './models/translation',
+        'MODEL_NAMES': {
+            'en-ar': 'Helsinki-NLP/opus-mt-en-ar',  # English to Arabic
+            'fr-en': 'Helsinki-NLP/opus-mt-fr-en',  # French to English
+            'ar-en': 'Helsinki-NLP/opus-mt-ar-en',  # Arabic to English
+        },
+        'MODELS_LOAD_TIMEOUT': 300,
+        'MODELS_DIR': './models/translation/cache',
+        'SUPPORTED_SPEECH_MODELS': ['en'],
+        'SUPPORTED_TRANSLATION_PAIRS': [
+            ('en', 'ar'),  # English to Arabic
+            ('fr', 'en'),  # French to English
+            ('ar', 'en')   # Arabic to English
+        ],
+        'MAX_WORKERS': 2,
+        'USE_LOW_MEMORY': True,
+        'TORCH_DTYPE': 'float32'
     }
-
 
 class ServicesConfig:
-    # Recognition settings
-    RECOGNITION = {
-        'FUZZY_CONFIDENCE_THRESHOLD': 75,
-        'RECOGNITION_MODEL_DIR': r"/path/to/kaldi/model",
-        'VOSK_MODELS': {
-            'en': r"vosk-model-small-en-us-0.15",
-            'ar': r"vosk-model-ar-mgb2-0.4",
-            'fr': r"vosk-model-small-fr-0.22"
-        }
-    }
-
-    # Language settings
     LANGUAGES = {
         'SUPPORTED': ['en', 'ar', 'fr'],
         'MAPPING': {
-            'arabic': 'ar',
             'english': 'en',
+            'arabic': 'ar',
             'french': 'fr'
         }
     }
+
+    RECOGNITION = {
+        'VOSK_MODEL_PATH': './models/vosk',
+        'VOSK_MODELS': {
+            'en': 'vosk-model-small-en-us'
+        },
+        'RECOGNITION_MODEL_DIR': './models/recognition',
+        'FUZZY_CONFIDENCE_THRESHOLD': 75
+    }
+
+
 
 
 class LLMConfig:

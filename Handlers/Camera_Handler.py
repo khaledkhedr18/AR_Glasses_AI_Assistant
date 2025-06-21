@@ -1,11 +1,10 @@
-import threading
+import os
 import cv2
 from picamera2 import Picamera2
 import libcamera
 from utils.Config import CameraConfig
 from utils.Logging import Logger
-import os
-
+import threading
 
 class CameraHandler:
     # Class-level variables
