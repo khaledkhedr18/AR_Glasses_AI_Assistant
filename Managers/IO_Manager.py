@@ -22,7 +22,6 @@ class IOManager:
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.service = Services()
-        self.logger = Logger()
 
         # Initialize configuration parameters
         self.wake_word = IOConfig.INTERFACE['WAKE_WORD']

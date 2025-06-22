@@ -16,5 +16,6 @@ Network_Manager/
 /utils/Kaldi_Recognizer.py
 /LLM_Manager.py
 /LLM_Manager_Temp.py
+/temp.py
 
 

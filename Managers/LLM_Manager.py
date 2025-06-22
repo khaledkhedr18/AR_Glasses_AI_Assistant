@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from transformers import MarianMTModel, MarianTokenizer
 from Handlers.OCR_Handler import OCRHandler
 from Handlers.Translation_Handler import TranslationHandler
-from utils.Config import MLConfig, LLMConfig, ServicesConfig
+from utils.config import ML_CONFIG, LLM_CONFIG, SERVICES_CONFIG
 from utils.Services import Services
 from utils.Logging import Logger
 
@@ -19,7 +19,7 @@ class LLMManager:
     Handles translation and extraction of text from images and speech.
     """
 
-    class __Model_Loader_Handler:
+    class __ModelLoader:
         """Private model loader handler for managing ML models.
         Implements singleton pattern to prevent multiple model loading."""
 
@@ -41,7 +41,7 @@ class LLMManager:
             if cls._instance is None:
                 with cls._instance_lock:
                     if cls._instance is None:
-                        cls._instance = super(LLMManager.__Model_Loader_Handler, cls).__new__(cls)
+                        cls._instance = super(LLMManager.__ModelLoader, cls).__new__(cls)
             return cls._instance
 
         def __init__(self):
@@ -56,9 +56,10 @@ class LLMManager:
 
                     # Core components initialization
                     self.service = Services()
-                    self.models_dir = MLConfig.TRANSLATION['TRANSLATION_MODELS_DIR']
-                    self.recognizer_model_path = ServicesConfig.RECOGNITION['RECOGNITION_MODEL_DIR']
-                    self.model_timeout = MLConfig.TRANSLATION['MODELS_LOAD_TIMEOUT']
+                    # Updated to dictionary access
+                    self.models_dir = ML_CONFIG['TRANSLATION']['TRANSLATION_MODELS_DIR']
+                    self.recognizer_model_path = SERVICES_CONFIG['RECOGNITION']['RECOGNITION_MODEL_DIR']
+                    self.model_timeout = ML_CONFIG['TRANSLATION']['MODELS_LOAD_TIMEOUT']
 
                     # Load models only if not already loaded
                     self.__load_models()
@@ -79,7 +80,8 @@ class LLMManager:
                 return None, None, False
 
             pair = (src_code, tgt_code)
-            if pair not in MLConfig.TRANSLATION['SUPPORTED_TRANSLATION_PAIRS']:
+            # Updated to dictionary access
+            if pair not in ML_CONFIG['TRANSLATION']['SUPPORTED_TRANSLATION_PAIRS']:
                 self.logger.error(f"Unsupported translation pair: {pair}")
                 return None, None, False
 
@@ -95,7 +97,8 @@ class LLMManager:
                 return None, False
 
             lang_code = self.service.get_language_code(language)
-            if not lang_code or lang_code not in MLConfig.TRANSLATION['SUPPORTED_SPEECH_MODELS']:
+            # Updated to dictionary access
+            if not lang_code or lang_code not in ML_CONFIG['TRANSLATION']['SUPPORTED_SPEECH_MODELS']:
                 self.logger.error(f"Unsupported speech language: {language}")
                 return None, False
 
@@ -129,7 +132,8 @@ class LLMManager:
             directories = [
                 self.models_dir,
                 self.recognizer_model_path,
-                MLConfig.TRANSLATION['MODELS_DIR']
+                # Updated to dictionary access
+                ML_CONFIG['TRANSLATION']['MODELS_DIR']
             ]
             for directory in directories:
                 try:
@@ -146,16 +150,19 @@ class LLMManager:
             loading_tasks = []
 
             try:
-                with ThreadPoolExecutor(max_workers=MLConfig.TRANSLATION['MAX_WORKERS']) as executor:
+                # Updated to dictionary access
+                with ThreadPoolExecutor(max_workers=ML_CONFIG['TRANSLATION']['MAX_WORKERS']) as executor:
                     speech_model_path = os.path.join(
-                        ServicesConfig.RECOGNITION['VOSK_MODEL_PATH'],
-                        ServicesConfig.RECOGNITION['VOSK_MODELS']['en']
+                        # Updated to dictionary access
+                        SERVICES_CONFIG['RECOGNITION']['VOSK_MODEL_PATH'],
+                        SERVICES_CONFIG['RECOGNITION']['VOSK_MODELS']['en']
                     )
                     loading_tasks.append(
                         executor.submit(self.__load_speech_model, 'en', speech_model_path)
                     )
 
-                    for src_lang, tgt_lang in MLConfig.TRANSLATION['SUPPORTED_TRANSLATION_PAIRS']:
+                    # Updated to dictionary access
+                    for src_lang, tgt_lang in ML_CONFIG['TRANSLATION']['SUPPORTED_TRANSLATION_PAIRS']:
                         loading_tasks.append(
                             executor.submit(
                                 self.__load_translation_model,
@@ -204,21 +211,24 @@ class LLMManager:
                     self.logger.info(f"Translation model already loaded for: {model_key}")
                     return
 
-                model_name = MLConfig.TRANSLATION['MODEL_NAMES'].get(model_key)
+                # Updated to dictionary access
+                model_name = ML_CONFIG['TRANSLATION']['MODEL_NAMES'].get(model_key)
                 if not model_name:
                     raise ValueError(f"No model name found for language pair: {model_key}")
 
+                # Updated to dictionary access for torch_dtype and cache_dir
+                torch_dtype_str = ML_CONFIG['TRANSLATION']['TORCH_DTYPE']
                 model = MarianMTModel.from_pretrained(
                     model_name,
-                    torch_dtype=getattr(torch, MLConfig.TRANSLATION['TORCH_DTYPE']),
-                    cache_dir=MLConfig.TRANSLATION['MODELS_DIR'],
+                    torch_dtype=getattr(torch, torch_dtype_str),
+                    cache_dir=ML_CONFIG['TRANSLATION']['MODELS_DIR'],
                     low_cpu_mem_usage=True,
                     return_dict=False
                 )
 
                 tokenizer = MarianTokenizer.from_pretrained(
                     model_name,
-                    cache_dir=MLConfig.TRANSLATION['MODELS_DIR'],
+                    cache_dir=ML_CONFIG['TRANSLATION']['MODELS_DIR'],
                     model_max_length=512
                 )
 
@@ -257,24 +267,23 @@ class LLMManager:
                     self.logger.error(f"Cleanup failed: {str(e)}")
                     raise
 
-    # [Rest of the LLMManager methods remain unchanged]
-
     def __init__(self):
         """Initialize LLMManager with required handlers"""
         self.logger = Logger()
         self.logger.info("Initializing LLM_Manager")
 
         # Initialize core handlers and services
-        self.__model_loader = self.__Model_Loader_Handler()
+        self.__model_loader = self.__ModelLoader()
         self.translation_handler = TranslationHandler()
         self.ocr_handler = OCRHandler()
         self.service = Services()
 
-        # Supported prompt types
-        self.prompts_supported = LLMConfig.PROMPTS['SUPPORTED']
+        # Supported prompt types - Updated to dictionary access
+        self.prompts_supported = LLM_CONFIG['PROMPTS']['SUPPORTED']
 
         self.logger.info("LLM_Manager initialized successfully")
 
+    # Rest of the LLMManager methods remain unchanged
     def process_user_inputs(self, user_config, input_data):
         """Process and translate multimedia input based on user configuration"""
         self.logger.info(f"Starting translation with mode: {user_config['translation_mode']}")
@@ -427,7 +436,7 @@ class LLMManager:
         else:
             self.logger.warning(f"Unsupported command: {command}")
             result['success'] = False
-            result['operation_type'] = 'unknown'
+            result['operation_type'] = None
 
         return result
 
