@@ -11,25 +11,35 @@ import threading
 # This module handles all I/O operations including camera, audio, and GUI interactions.
 class IOManager:
     def __init__(self):
+        """
+        Initializes the IO Manager with necessary components and configurations.
+        """
         self.logger = Logger()
         self.logger.info("Initializing IO Handler")
-        self.Services = Services()
+
+        # Initialize handlers for GUI, Camera, Audio, and Services
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
-        self.Services = Services()
+        self.service = Services()
         self.logger = Logger()
+
+        # Initialize configuration parameters
         self.wake_word = IOConfig.INTERFACE['WAKE_WORD']
         self.mode_keywords = IOConfig.KEYWORDS['MODE']
         self.command_keywords = IOConfig.KEYWORDS['COMMANDS']
         self.audio_record_timeout = IOConfig.TIMING['AUDIO_RECORD_TIMEOUT']
         self.camera_thread_timeout = IOConfig.TIMING['CAMERA_THREAD_TIMEOUT']
         self.supported_languages = ServicesConfig.LANGUAGES['MAPPING']
+
+        # Initialize state variables
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None
         self.audio_running = False
         self.recorded_audio = None
+
+        # Locks for thread safety
         self.camera_lock = threading.Lock()
         self.audio_lock = threading.Lock()
         self.interaction_lock = threading.Lock()
@@ -37,7 +47,7 @@ class IOManager:
     def start_camera_stream(self):
         """Starts camera stream in a separate thread with 30ms interval"""
         with self.camera_lock:
-            if not self.camera_running and (not self.camera_thread or not self.camera_thread.is_alive()):
+            if not self.camera_running:
                 self.camera_running = True
                 self.camera_thread = threading.Thread(target=self.__stream_camera)
                 self.camera_thread.daemon = True
@@ -132,9 +142,9 @@ class IOManager:
             self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
-            text = self.Services.recognize_text_from_speech(self.recorded_audio)
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
             if text:
-                return self.Services.verify_user_input(text, self.wake_word) is not None
+                return self.service.verify_user_input(text, self.wake_word) is not None
 
             return False
 
@@ -148,9 +158,9 @@ class IOManager:
             self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
-            text = self.Services.recognize_text_from_speech(self.recorded_audio)
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
             if text:
-                return self.Services.verify_user_input(text, self.mode_keywords)
+                return self.service.verify_user_input(text, self.mode_keywords)
             return None
 
         def retry_input(input_func, prompt, attempt=1):
@@ -214,7 +224,7 @@ class IOManager:
                 return None
 
             # Convert speech to text
-            text = self.Services.recognize_text_from_speech(self.recorded_audio)
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
             if not text:
                 return None
 
@@ -318,7 +328,7 @@ class IOManager:
                     break
                 self.frame_captured = self.camera.capture_frame()
                 self.gui.display_image_in_widget(IOConfig.INTERFACE['CAMERA'], self.frame_captured)
-                time.sleep(IOConfig.INTERFACE['FRAME_INTERVAL'])  # 30ms interval
+                time.sleep(IOConfig.TIMING['FRAME_INTERVAL'])  # 30ms interval
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in camera stream", e)
                 self.camera_running = False  # Ensure we exit on error

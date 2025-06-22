@@ -77,7 +77,9 @@ class OCRConfig:
     PROCESSING = {
         'LEVEL': 'medium',
         'THRESH_VALUE': 150,
-        'KERNEL_SIZE': (1, 1)
+        'KERNEL_SIZE': (1, 1),
+        'DENOISE_H': 10,
+        'MAX_VALUE': 255
     }
 
     STORAGE = {
@@ -86,7 +88,7 @@ class OCRConfig:
     }
 
 
-class LTDConfig:
+class MLConfig:
     TRANSLATION = {
         'TRANSLATION_MODELS_DIR': './models/translation',
         'MODEL_NAMES': {

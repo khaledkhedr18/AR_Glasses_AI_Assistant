@@ -1,133 +1,305 @@
+import os
+import gc
+import torch
+import threading
+import numpy as np
+from vosk import Model
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from transformers import MarianMTModel, MarianTokenizer
 from Handlers.OCR_Handler import OCRHandler
 from Handlers.Translation_Handler import TranslationHandler
-from Handlers.LTD_Handler import LTDHandler
-from utils.Config import LLMConfig
+from utils.Config import MLConfig, LLMConfig, ServicesConfig
 from utils.Services import Services
-import numpy as np
-from datetime import datetime
 from utils.Logging import Logger
-import threading
 
 
 class LLMManager:
     """
     Central manager for all language model operations.
-
-    This class acts as a communication hub for:
-    1. LLM handlers to communicate with each other indirectly
-    2. External managers to access language model functionality
+    Handles translation and extraction of text from images and speech.
     """
 
+    class __Model_Loader_Handler:
+        """Private model loader handler for managing ML models.
+        Implements singleton pattern to prevent multiple model loading."""
+
+        # Singleton instance and state management
+        _instance = None
+        _instance_lock = threading.Lock()
+
+        # Model management
+        _models_initialized = False
+        _initialization_lock = threading.Lock()
+        _loading_complete = threading.Event()
+
+        # Global model storage
+        _speech_models = {}
+        _translation_models = {}
+
+        def __new__(cls):
+            """Ensure single instance creation (thread-safe)"""
+            if cls._instance is None:
+                with cls._instance_lock:
+                    if cls._instance is None:
+                        cls._instance = super(LLMManager.__Model_Loader_Handler, cls).__new__(cls)
+            return cls._instance
+
+        def __init__(self):
+            """Initialize handler with memory-optimized settings (thread-safe)"""
+            if self._models_initialized:
+                return
+
+            with self._initialization_lock:
+                if not self._models_initialized:
+                    self.logger = Logger()
+                    self.logger.info("Initializing Model Loader Handler")
+
+                    # Core components initialization
+                    self.service = Services()
+                    self.models_dir = MLConfig.TRANSLATION['TRANSLATION_MODELS_DIR']
+                    self.recognizer_model_path = ServicesConfig.RECOGNITION['RECOGNITION_MODEL_DIR']
+                    self.model_timeout = MLConfig.TRANSLATION['MODELS_LOAD_TIMEOUT']
+
+                    # Load models only if not already loaded
+                    self.__load_models()
+                    self._models_initialized = True
+                    self.logger.info("Model Loader Handler initialization completed")
+
+        def get_translation_model(self, source_lang, target_lang):
+            """Get translation model from cache"""
+            if not self._loading_complete.wait(timeout=self.model_timeout):
+                self.logger.error("Model loading timeout exceeded")
+                return None, None, False
+
+            src_code = self.service.get_language_code(source_lang)
+            tgt_code = self.service.get_language_code(target_lang)
+
+            if not src_code or not tgt_code:
+                self.logger.error(f"Invalid language codes: {source_lang}, {target_lang}")
+                return None, None, False
+
+            pair = (src_code, tgt_code)
+            if pair not in MLConfig.TRANSLATION['SUPPORTED_TRANSLATION_PAIRS']:
+                self.logger.error(f"Unsupported translation pair: {pair}")
+                return None, None, False
+
+            model_key = f"{src_code}-{tgt_code}"
+            model_pair = self._translation_models.get(model_key)
+
+            return (*model_pair, True) if model_pair else (None, None, False)
+
+        def get_speech_model(self, language):
+            """Get speech model from cache"""
+            if not self._loading_complete.wait(timeout=self.model_timeout):
+                self.logger.error("Model loading timeout exceeded")
+                return None, False
+
+            lang_code = self.service.get_language_code(language)
+            if not lang_code or lang_code not in MLConfig.TRANSLATION['SUPPORTED_SPEECH_MODELS']:
+                self.logger.error(f"Unsupported speech language: {language}")
+                return None, False
+
+            model = self._speech_models.get(lang_code)
+            return (model, True) if model else (None, False)
+
+        def __load_models(self):
+            """Initialize and load models if not already loaded (thread-safe)"""
+            if self._loading_complete.is_set():
+                self.logger.info("Models already loaded, using existing models")
+                return
+
+            with self._initialization_lock:
+                if not self._loading_complete.is_set():
+                    try:
+                        gc.collect()
+                        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+
+                        self.__ensure_model_directories()
+                        self.__preload_all_models()
+
+                        self._loading_complete.set()
+                        self.logger.info("Initial model loading completed successfully")
+                    except Exception as e:
+                        self.logger.error(f"Model loading failed: {str(e)}")
+                        self._loading_complete.clear()
+                        raise
+
+        def __ensure_model_directories(self):
+            """Create and verify required model directories"""
+            directories = [
+                self.models_dir,
+                self.recognizer_model_path,
+                MLConfig.TRANSLATION['MODELS_DIR']
+            ]
+            for directory in directories:
+                try:
+                    os.makedirs(directory, exist_ok=True)
+                    if not os.access(directory, os.W_OK):
+                        raise PermissionError(f"Cannot write to {directory}")
+                except Exception as e:
+                    self.logger.error(f"Directory creation failed: {str(e)}")
+                    raise
+
+        def __preload_all_models(self):
+            """Load models using thread pool with resource management"""
+            self.logger.info("Starting model loading process")
+            loading_tasks = []
+
+            try:
+                with ThreadPoolExecutor(max_workers=MLConfig.TRANSLATION['MAX_WORKERS']) as executor:
+                    speech_model_path = os.path.join(
+                        ServicesConfig.RECOGNITION['VOSK_MODEL_PATH'],
+                        ServicesConfig.RECOGNITION['VOSK_MODELS']['en']
+                    )
+                    loading_tasks.append(
+                        executor.submit(self.__load_speech_model, 'en', speech_model_path)
+                    )
+
+                    for src_lang, tgt_lang in MLConfig.TRANSLATION['SUPPORTED_TRANSLATION_PAIRS']:
+                        loading_tasks.append(
+                            executor.submit(
+                                self.__load_translation_model,
+                                src_lang,
+                                tgt_lang
+                            )
+                        )
+                        gc.collect()
+
+                    for future in as_completed(loading_tasks):
+                        try:
+                            future.result()
+                        except Exception as e:
+                            self.logger.error(f"Model loading task failed: {str(e)}")
+                            raise
+
+            except Exception as e:
+                self.logger.error(f"Model loading process failed: {str(e)}")
+                raise
+
+        def __load_speech_model(self, language, model_path):
+            """Load speech recognition model"""
+            try:
+                if language in self._speech_models:
+                    self.logger.info(f"Speech model already loaded for: {language}")
+                    return
+
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"Speech model not found: {model_path}")
+
+                model = Model(model_path)
+                with self._initialization_lock:
+                    self._speech_models[language] = model
+                    self.logger.info(f"Speech model loaded: {language}")
+
+            except Exception as e:
+                self.logger.error(f"Speech model loading failed: {str(e)}")
+                raise
+
+        def __load_translation_model(self, src_lang, tgt_lang):
+            """Load translation model"""
+            try:
+                model_key = f"{src_lang}-{tgt_lang}"
+
+                if model_key in self._translation_models:
+                    self.logger.info(f"Translation model already loaded for: {model_key}")
+                    return
+
+                model_name = MLConfig.TRANSLATION['MODEL_NAMES'].get(model_key)
+                if not model_name:
+                    raise ValueError(f"No model name found for language pair: {model_key}")
+
+                model = MarianMTModel.from_pretrained(
+                    model_name,
+                    torch_dtype=getattr(torch, MLConfig.TRANSLATION['TORCH_DTYPE']),
+                    cache_dir=MLConfig.TRANSLATION['MODELS_DIR'],
+                    low_cpu_mem_usage=True,
+                    return_dict=False
+                )
+
+                tokenizer = MarianTokenizer.from_pretrained(
+                    model_name,
+                    cache_dir=MLConfig.TRANSLATION['MODELS_DIR'],
+                    model_max_length=512
+                )
+
+                with self._initialization_lock:
+                    self._translation_models[model_key] = (model, tokenizer)
+                    self.logger.info(f"Translation model loaded: {model_key}")
+
+            except Exception as e:
+                self.logger.error(f"Translation model loading failed: {str(e)}")
+                raise
+
+        def cleanup(self):
+            """Clean up resources"""
+            with self._initialization_lock:
+                try:
+                    for model in list(self._speech_models.values()):
+                        if hasattr(model, '__del__'):
+                            model.__del__()
+                    self._speech_models.clear()
+
+                    for model_pair in list(self._translation_models.values()):
+                        if model_pair:
+                            del model_pair[0]
+                            del model_pair[1]
+                    self._translation_models.clear()
+
+                    self.__class__._models_initialized = False
+                    self._loading_complete.clear()
+
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+
+                    self.logger.info("All models unloaded and memory cleaned")
+                except Exception as e:
+                    self.logger.error(f"Cleanup failed: {str(e)}")
+                    raise
+
+    # [Rest of the LLMManager methods remain unchanged]
+
     def __init__(self):
-        """
-        Initialize the LLM_Manager with all required handlers.
-        """
+        """Initialize LLMManager with required handlers"""
         self.logger = Logger()
         self.logger.info("Initializing LLM_Manager")
 
-        # Initialize core handlers
-        self.ltd_handler = LTDHandler()
+        # Initialize core handlers and services
+        self.__model_loader = self.__Model_Loader_Handler()
         self.translation_handler = TranslationHandler()
         self.ocr_handler = OCRHandler()
         self.service = Services()
 
-        # Model and resource caches
-        self.active_translations = {}
-        self.translation_counter = 0
-
+        # Supported prompt types
         self.prompts_supported = LLMConfig.PROMPTS['SUPPORTED']
 
         self.logger.info("LLM_Manager initialized successfully")
 
     def process_user_inputs(self, user_config, input_data):
-        """
-        Process and translate multimedia input based on user configuration.
-
-        Args:
-            user_config (dict): {
-                'source_lang': source language,
-                'dest_lang': destination language,
-                'translation_mode': 'image'|'speech'|'both'
-            }
-            input_data: Can be:
-                - numpy.ndarray: Array of pixels from capture_array()
-                - numpy.ndarray: Audio wave chunks
-                - tuple: (frame_array, audio_chunks) for combined mode
-
-        Returns:
-            dict: Translation results with extracted and translated content
-        """
+        """Process and translate multimedia input based on user configuration"""
         self.logger.info(f"Starting translation with mode: {user_config['translation_mode']}")
 
         try:
-            # Validate and setup models
             models_setup = self.__setup_translation_environment(user_config)
             if not models_setup:
                 return None
 
-            # Process the input based on mode
-            result = self.__process_input_by_mode(user_config['translation_mode'], input_data, models_setup)
-            if not result:
-                return None
+            result = self.__process_input_by_mode(
+                user_config['translation_mode'],
+                input_data,
+                models_setup
+            )
 
-            self.logger.info("Translation completed successfully")
+            if result:
+                self.logger.info("Translation completed successfully")
             return result
 
         except Exception as e:
             self.logger.error(f"Translation failed: {str(e)}")
             return None
 
-    def get_all_translations(self):
-        """
-        Retrieve all stored translations.
-
-        Returns:
-            dict: All stored translations
-        """
-        return self.active_translations
-
-    def clear_stored_translations(self):
-        """
-        Clear all stored translations from memory.
-        """
-        self.active_translations.clear()
-        self.translation_counter = 0
-
-    def get_stored_translation(self, index):
-        """
-        Retrieve a specific stored translation by index.
-
-        Args:
-            index (int): The translation index
-
-        Returns:
-            dict: Translation data or None if not found
-        """
-        return self.active_translations.get(index)
-
-    def clear_old_translations(self, max_age_minutes=30):
-        """Clear translations older than specified minutes"""
-        current_time = datetime.now()
-        expired = []
-        for idx, trans in self.active_translations.items():
-            age = (current_time - trans['timestamp']).total_seconds() / 60
-            if age > max_age_minutes:
-                expired.append(idx)
-
-        for idx in expired:
-            del self.active_translations[idx]
-
     def __setup_translation_environment(self, user_config):
-        """
-        Setup and validate the translation environment including models.
-
-        Args:
-            user_config (dict): User configuration with language settings
-
-        Returns:
-            tuple: (src_code, dest_code, translation_model, speech_model) or None if setup fails
-        """
-        # Get language codes
+        """Setup translation environment and validate models"""
         src_code = self.service.get_language_code(user_config['source_lang'])
         dest_code = self.service.get_language_code(user_config['dest_lang'])
 
@@ -135,36 +307,27 @@ class LLMManager:
             self.logger.error("Invalid language configuration")
             return None
 
-        # Get translation model
-        translation_model = self.ltd_handler.get_translation_model(src_code, dest_code)
-        if not translation_model or not translation_model[0]:
+        translation_model = self.__model_loader.get_translation_model(src_code, dest_code)
+        if not translation_model[2]:  # Check success flag
             self.logger.error("Failed to load translation model")
             return None
 
-        # Get speech model if needed
         speech_model = None
         if user_config['translation_mode'] in ['speech', 'both']:
-            speech_model = self.ltd_handler.get_speech_model(src_code)
-            if not speech_model or not speech_model[0]:
+            speech_model = self.__model_loader.get_speech_model(src_code)
+            if not speech_model[1]:  # Check success flag
                 self.logger.error("Failed to load speech model")
                 return None
+            speech_model = speech_model[0]  # Extract model from tuple
 
-        return src_code, dest_code, translation_model, speech_model
+        return src_code, dest_code, translation_model[:2], speech_model
 
     def __process_input_by_mode(self, mode, input_data, models_setup):
-        """
-        Process input based on translation mode.
+        """Process input based on translation mode"""
+        if not models_setup:
+            return None
 
-        Args:
-            mode (str): Translation mode
-            input_data: Input data to process
-            models_setup (tuple): (src_code, dest_code, translation_model, speech_model)
-
-        Returns:
-            dict: Translation results or None if processing fails
-        """
         src_code, _, translation_model, speech_model = models_setup
-
         try:
             if mode == 'image':
                 return self.__process_image_input(input_data, src_code, translation_model)
@@ -183,7 +346,7 @@ class LLMManager:
             return None
 
     def __process_image_input(self, input_data, src_code, translation_model):
-        """Handle image-only translation."""
+        """Handle image-only translation"""
         if not isinstance(input_data, np.ndarray):
             raise ValueError("Image mode requires array of pixels")
 
@@ -203,12 +366,12 @@ class LLMManager:
         return result
 
     def __process_speech_input(self, input_data, speech_model, translation_model):
-        """Handle speech-only translation."""
+        """Handle speech-only translation"""
         if not isinstance(input_data, np.ndarray):
             raise ValueError("Speech mode requires numpy array of audio chunks")
 
         result = self.__create_result_template()
-        recognized_text = self.service.recognize_text_from_speech(input_data, speech_model)
+        recognized_text = self.service.recognize_text_from_speech(input_data, (speech_model, True))
 
         if recognized_text:
             result['original_text'] = recognized_text
@@ -224,7 +387,7 @@ class LLMManager:
         return result
 
     def __process_combined_input(self, input_data, src_code, speech_model, translation_model):
-        """Handle combined image and speech translation."""
+        """Handle combined image and speech translation"""
         if not isinstance(input_data, tuple) or len(input_data) != 2:
             raise ValueError("Combined mode requires tuple of (frame_array, audio_chunks)")
 
@@ -235,7 +398,7 @@ class LLMManager:
         result = self.__create_result_template()
 
         # Process speech command
-        recognized_text = self.service.recognize_text_from_speech(audio_chunks, speech_model)
+        recognized_text = self.service.recognize_text_from_speech(audio_chunks, (speech_model, True))
         if not recognized_text:
             return result
 
@@ -250,50 +413,39 @@ class LLMManager:
         result['extracted_text'] = extracted_text
 
         if command == "tr":
-            return self.__handle_translation_command(extracted_text, translation_model)
+            translated_text = self.translation_handler.translate_text(
+                extracted_text,
+                translation_model
+            )
+            if translated_text:
+                result['translated_text'] = translated_text
+                result['operation_type'] = 'translation'
+                result['success'] = True
         elif command == "ex":
-            return self.__handle_extraction_command(extracted_text, src_code)
-
-        return result
-
-    def __handle_translation_command(self, extracted_text, translation_model):
-        """Process translation command in combined mode."""
-        result = self.__create_result_template()
-        translated_text = self.translation_handler.translate_text(extracted_text, translation_model)
-
-        if translated_text:
-            result['translated_text'] = translated_text
-            result['operation_type'] = 'translation'
+            result['operation_type'] = 'extraction'
             result['success'] = True
-            result['extracted_text'] = extracted_text
+        else:
+            self.logger.warning(f"Unsupported command: {command}")
+            result['success'] = False
+            result['operation_type'] = 'unknown'
 
-        return result
-
-    def __handle_extraction_command(self, extracted_text, src_code):
-        """Process extraction command in combined mode."""
-        result = self.__create_result_template()
-
-        self.active_translations[self.translation_counter] = {
-            'text': extracted_text,
-            'timestamp': datetime.now(),
-            'source_lang': src_code
-        }
-
-        result['storage_index'] = self.translation_counter
-        result['operation_type'] = 'extraction'
-        result['success'] = True
-        result['extracted_text'] = extracted_text
-
-        self.translation_counter += 1
         return result
 
     def __create_result_template(self):
-        """Create empty result template."""
+        """Create empty result template"""
         return {
             'success': False,
             'operation_type': None,
             'original_text': '',
             'translated_text': '',
-            'extracted_text': None,
-            'storage_index': None
+            'extracted_text': None
         }
+
+    def cleanup(self):
+        """Clean up resources and models"""
+        try:
+            self.__model_loader.cleanup()
+            self.logger.info("Successfully cleaned up LLM Manager resources")
+        except Exception as e:
+            self.logger.error(f"Failed to clean up resources: {str(e)}")
+            raise

@@ -5,7 +5,7 @@ LLM_Manager/
 Network_Manager/
 /Handler/Audio_Handler.py
 /Handlers/GUI_Handler.py
-#/Handlers/LTD_Handler.py
+/Handlers/LTD_Handler.py
 #/Handlers/OCR_Handler.py
 #/Handlers/Translation_Handler.py
 #/Managers/LLM_Manager.py

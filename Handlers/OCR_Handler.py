@@ -11,14 +11,12 @@ class OCRHandler:
         self.logger = Logger()
         self.logger.info("Initializing OCR Handler")
 
-        if not hasattr(OCRConfig, 'PROCESSING') or not hasattr(OCRConfig, 'MODES'):
-            raise ValueError("Invalid OCR configuration")
-
-        self.preprocessing_level = OCRConfig.PROCESSING.get('LEVEL', 'medium')
-        self.ocr_configs = OCRConfig.MODES
+        # Initialize OCR configurations
+        self.preprocessing_level = OCRConfig.PROCESSING['LEVEL']
         self.default_mode = 'DEFAULT'
-        self.save_directory = OCRConfig.STORAGE.get('SAVE_DIRECTORY', '/tmp')
-        self.processed_frame_filename = OCRConfig.STORAGE.get('PROCESSED_FRAME_FILENAME', 'frame.jpg')
+        self.save_directory = OCRConfig.STORAGE['SAVE_DIRECTORY']
+        self.processed_frame_filename = OCRConfig.STORAGE['PROCESSED_FRAME_FILENAME']
+        self.ocr_configs = OCRConfig.MODES
         os.makedirs(self.save_directory, exist_ok=True)
 
     def extract_text_from_frame(self, frame, lang="en", save_processed=False, mode=None):
@@ -72,14 +70,14 @@ class OCRHandler:
                 return gray
 
             denoised = cv2.fastNlMeansDenoising(gray, h=10)
-            _, thresh = cv2.threshold(denoised, OCR_CONFIG['THRESH_VALUE'], 255,
+            _, thresh = cv2.threshold(denoised, OCRConfig.PROCESSING['THRESH_VALUE'], 255,
                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
             if self.preprocessing_level == "medium":
                 return thresh
 
             if self.preprocessing_level == "high":
-                kernel = np.ones(OCR_CONFIG['KERNEL_SIZE'], np.uint8)
+                kernel = np.ones(OCRConfig.PROCESSING['KERNEL_SIZE'], np.uint8)
                 processed = cv2.dilate(thresh, kernel, iterations=1)
                 processed = cv2.erode(processed, kernel, iterations=1)
                 return processed
