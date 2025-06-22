@@ -1,15 +1,12 @@
 import subprocess
 import sounddevice as sd
 import numpy as np
-import time
-import json
 import threading
 import os
-import wave
 import scipy.io.wavfile as wavfile
 from datetime import datetime
 from vosk import KaldiRecognizer
-from utils.logging import Logger
+from utils.Logging import Logger
 from utils.WorkerThread import create_worker
 
 class AudioHandler:
@@ -68,38 +65,6 @@ class AudioHandler:
 
             return True
 
-    def _record_audio_raw(self, stop_event):
-        """
-        Record raw audio data until stop_event is set.
-
-        Args:
-            stop_event (threading.Event): Event to signal recording should stop
-        """
-        try:
-            def audio_callback(indata, frames, time, status):
-                if status:
-                    self.logger.warning(f"Audio input error: {status}")
-
-                # Store the audio chunk
-                self.audio_chunks.append(indata.copy())
-
-            # Start the input stream
-            with sd.InputStream(
-                callback=audio_callback,
-                channels=self.channels,
-                samplerate=self.sample_rate,
-                dtype=np.int16,
-                blocksize=8000
-            ):
-                self.logger.info("Recording audio...")
-                while not stop_event.is_set():
-                    sd.sleep(100)  # Sleep to reduce CPU usage
-
-        except Exception as e:
-            self.logger.error(f"Error during audio recording: {e}")
-        finally:
-            self.listening = False
-
     def stop_recording(self):
         """
         Stop recording and return the recorded audio based on mode.
@@ -152,38 +117,6 @@ class AudioHandler:
                 self.stop_recording_event = None
                 self.recording_thread = None
 
-    def _save_audio_to_file(self, audio_data):
-        """
-        Save audio data to file in WAV and MP3 formats.
-
-        Args:
-            audio_data (numpy.ndarray): Audio data to save
-
-        Returns:
-            str: Path to the saved MP3 file
-        """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        wav_path = os.path.join(self.audio_save_dir, f"recording_{timestamp}.wav")
-        mp3_path = os.path.join(self.audio_save_dir, f"recording_{timestamp}.mp3")
-
-        # Save as WAV first
-        try:
-            wavfile.write(wav_path, self.sample_rate, audio_data)
-
-            # Convert to MP3 using ffmpeg
-            subprocess.run([
-                "ffmpeg", "-y", "-i", wav_path,
-                "-acodec", "libmp3lame", "-ab", "128k", mp3_path
-            ], stderr=subprocess.DEVNULL)
-
-            # Remove the temporary WAV file
-            os.remove(wav_path)
-            return mp3_path
-
-        except Exception as e:
-            self.logger.error(f"Error saving audio file: {e}")
-            return None
-
     def get_audio(self, file_path):
         """
         Read audio file and return the audio data.
@@ -222,41 +155,6 @@ class AudioHandler:
             self.logger.error(f"Error reading audio file: {e}")
             return None
 
-    def recognize_from_audio(self, audio_data_or_path, model):
-        """
-        Recognize speech from audio data or file.
-
-        Args:
-            audio_data_or_path: Audio data array or path to audio file
-            model: Speech recognition model
-
-        Returns:
-            str: Recognized text
-        """
-        try:
-            # Handle audio input based on type
-            if isinstance(audio_data_or_path, str):
-                # It's a file path
-                audio_data = self.get_audio(audio_data_or_path)
-                if audio_data is None:
-                    return ""
-            else:
-                # It's audio data
-                audio_data = audio_data_or_path
-
-            # Process with speech recognition model
-            recognizer = KaldiRecognizer(model, self.sample_rate)
-
-            # Convert audio data to bytes and process
-            recognizer.AcceptWaveform(audio_data.tobytes())
-            result = json.loads(recognizer.FinalResult())
-
-            return result.get("text", "")
-
-        except Exception as e:
-            self.logger.error(f"Speech recognition error: {e}")
-            return ""
-
     def is_listening(self):
         """Check if the handler is currently recording audio."""
         return self.listening
@@ -290,17 +188,6 @@ class AudioHandler:
         worker.start()
         return worker
 
-    def _handle_speech_finished(self, worker, callback=None):
-        """Handle completion of a speech task"""
-        self._remove_task(worker)
-        if callback:
-            callback()
-
-    def _remove_task(self, task):
-        """Remove a task from the active tasks list"""
-        if task in self.active_tasks:
-            self.active_tasks.remove(task)
-
     def mute_speech(self):
         """Stop any ongoing speech output."""
         stopped_count = 0
@@ -333,3 +220,79 @@ class AudioHandler:
             pass
 
         self.active_tasks.clear()
+
+    def _record_audio_raw(self, stop_event):
+        """
+        Record raw audio data until stop_event is set.
+
+        Args:
+            stop_event (threading.Event): Event to signal recording should stop
+        """
+        try:
+            def audio_callback(indata, frames, time, status):
+                if status:
+                    self.logger.warning(f"Audio input error: {status}")
+
+                # Store the audio chunk
+                self.audio_chunks.append(indata.copy())
+
+            # Start the input stream
+            with sd.InputStream(
+                callback=audio_callback,
+                channels=self.channels,
+                samplerate=self.sample_rate,
+                dtype=np.int16,
+                blocksize=8000
+            ):
+                self.logger.info("Recording audio...")
+                while not stop_event.is_set():
+                    sd.sleep(100)  # Sleep to reduce CPU usage
+
+        except Exception as e:
+            self.logger.error(f"Error during audio recording: {e}")
+        finally:
+            self.listening = False
+
+
+    def _save_audio_to_file(self, audio_data):
+        """
+        Save audio data to file in WAV and MP3 formats.
+
+        Args:
+            audio_data (numpy.ndarray): Audio data to save
+
+        Returns:
+            str: Path to the saved MP3 file
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        wav_path = os.path.join(self.audio_save_dir, f"recording_{timestamp}.wav")
+        mp3_path = os.path.join(self.audio_save_dir, f"recording_{timestamp}.mp3")
+
+        # Save as WAV first
+        try:
+            wavfile.write(wav_path, self.sample_rate, audio_data)
+
+            # Convert to MP3 using ffmpeg
+            subprocess.run([
+                "ffmpeg", "-y", "-i", wav_path,
+                "-acodec", "libmp3lame", "-ab", "128k", mp3_path
+            ], stderr=subprocess.DEVNULL)
+
+            # Remove the temporary WAV file
+            os.remove(wav_path)
+            return mp3_path
+
+        except Exception as e:
+            self.logger.error(f"Error saving audio file: {e}")
+            return None
+
+    def _handle_speech_finished(self, worker, callback=None):
+        """Handle completion of a speech task"""
+        self._remove_task(worker)
+        if callback:
+            callback()
+
+    def _remove_task(self, task):
+        """Remove a task from the active tasks list"""
+        if task in self.active_tasks:
+            self.active_tasks.remove(task)

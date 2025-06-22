@@ -1,8 +1,7 @@
 import os
 import importlib.util
-import sys
 
-class GUI_Handler:
+class GUIHandler:
     """
     Main handler for managing GUI interfaces.
 
@@ -111,56 +110,6 @@ class GUI_Handler:
             return self.gui_handler.display_image_in_widget(image_path, widget_instance)
         return False
 
-    def _load_gui_handler(self):
-        """Load the appropriate GUI handler based on the selected type"""
-        # Get the current directory
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        if self.gui_type == "qt":
-            # Load Qt handler
-            module_path = os.path.join(base_dir, "QT_Handler", "Qt_Handler.py")
-            if os.path.exists(module_path):
-                spec = importlib.util.spec_from_file_location("Qt_Handler", module_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                # Create the Qt handler
-                self.gui_handler = module.Qt_Handler()
-                print("Qt GUI handler loaded successfully")
-            else:
-                print(f"Error: Qt handler module not found at {module_path}")
-                self._fallback_to_tkinter()
-
-        elif self.gui_type == "tkinter":
-            # Load Tkinter handler
-            module_path = os.path.join(base_dir, "Tkinter_Handler", "Tkinter_Handler.py")
-            if os.path.exists(module_path):
-                spec = importlib.util.spec_from_file_location("Tkinter_Handler", module_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                # Create the Tkinter handler
-                self.gui_handler = module.Tkinter_Handler()
-                print("Tkinter GUI handler loaded successfully")
-            else:
-                print(f"Error: Tkinter handler module not found at {module_path}")
-                self._fallback_to_qt()
-
-        else:
-            print(f"Unsupported GUI type: {self.gui_type}")
-            self._fallback_to_qt()
-
-    def _fallback_to_qt(self):
-        """Try to load Qt as a fallback"""
-        print("Falling back to Qt GUI")
-        self.gui_type = "qt"
-        self._load_gui_handler()
-
-    def _fallback_to_tkinter(self):
-        """Try to load Tkinter as a fallback if Qt fails"""
-        print("Falling back to Tkinter GUI")
-        self.gui_type = "tkinter"
-        self._load_gui_handler()
 
     def create_window(self, title="AR Glasses Assistant", fullscreen=True):
         """
@@ -292,3 +241,54 @@ class GUI_Handler:
         if self.gui_handler and hasattr(self.gui_handler, 'delete_overlay_widget'):
             return self.gui_handler.delete_overlay_widget(widget_instance)
         return False
+
+    def _load_gui_handler(self):
+        """Load the appropriate GUI handler based on the selected type"""
+        # Get the current directory
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        if self.gui_type == "qt":
+            # Load Qt handler
+            module_path = os.path.join(base_dir, "QT_Handler", "Qt_Handler.py")
+            if os.path.exists(module_path):
+                spec = importlib.util.spec_from_file_location("Qt_Handler", module_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                # Create the Qt handler
+                self.gui_handler = module.Qt_Handler()
+                print("Qt GUI handler loaded successfully")
+            else:
+                print(f"Error: Qt handler module not found at {module_path}")
+                self._fallback_to_tkinter()
+
+        elif self.gui_type == "tkinter":
+            # Load Tkinter handler
+            module_path = os.path.join(base_dir, "Tkinter_Handler", "Tkinter_Handler.py")
+            if os.path.exists(module_path):
+                spec = importlib.util.spec_from_file_location("Tkinter_Handler", module_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                # Create the Tkinter handler
+                self.gui_handler = module.Tkinter_Handler()
+                print("Tkinter GUI handler loaded successfully")
+            else:
+                print(f"Error: Tkinter handler module not found at {module_path}")
+                self._fallback_to_qt()
+
+        else:
+            print(f"Unsupported GUI type: {self.gui_type}")
+            self._fallback_to_qt()
+
+    def _fallback_to_qt(self):
+        """Try to load Qt as a fallback"""
+        print("Falling back to Qt GUI")
+        self.gui_type = "qt"
+        self._load_gui_handler()
+
+    def _fallback_to_tkinter(self):
+        """Try to load Tkinter as a fallback if Qt fails"""
+        print("Falling back to Tkinter GUI")
+        self.gui_type = "tkinter"
+        self._load_gui_handler()

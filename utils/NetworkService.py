@@ -1,11 +1,11 @@
 import os
 import threading
 import time
-from utils.logging import Logger
-from utils.config import user_config, NETWORK_CONFIG
-from Network_Manager.Network_Handlers.Network_Handler import Network_Handler
+from utils.Logging import Logger
+from utils.Config import NETWORK_CONFIG
+from Socket_Handler import SocketHandler
 
-class NetworkManager:
+class NetworkService:
     """
     The Network Manager class serves as the central hub for handling
     all network-related operations. It provides an interface for the application
@@ -20,7 +20,7 @@ class NetworkManager:
         # Create Network Handler instance with configuration
         server_ip = NETWORK_CONFIG.get('SERVER_IP')
         server_port = NETWORK_CONFIG.get('SERVER_PORT')
-        self.network = Network_Handler(server_ip=server_ip, server_port=server_port)
+        self.network = SocketHandler(server_ip=server_ip, server_port=server_port)
 
         # Status tracking
         self.is_connected = False

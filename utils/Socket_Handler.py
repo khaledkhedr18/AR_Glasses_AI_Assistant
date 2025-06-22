@@ -3,10 +3,10 @@ import json
 import base64
 import time
 import datetime
-from utils.config import NETWORK_CONFIG
-from utils.logging import Logger
+from utils.Config import NETWORK_CONFIG
+from utils.Logging import Logger
 
-class Network_Handler:
+class SocketHandler:
     """
     Handler for network communications including server connections
     and data transmission for online services.

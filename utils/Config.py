@@ -1,0 +1,266 @@
+"""
+Configuration settings for AR Glasses AI Assistant
+"""
+
+# GUI Widget Configuration
+OVERLAY_WIDGET_CONFIGS = {
+    "status": {
+        "style": """
+            QLabel {
+                color: white;
+                background-color: rgba(0,0,0,200);
+                border-radius: 5px;
+                padding: 5px;
+                font: bold 14px;
+            }
+        """,
+        "alignment": "center",
+        "size": (200, 40),
+        "position": (300, 20),
+        "default_text": "Status: INITIALIZING"
+    },
+    "user_speech": {
+        "style": """
+            QLabel {
+                color: white;
+                background-color: rgba(0,0,0,200);
+                border-radius: 5px;
+                padding: 8px;
+                font: 12px;
+            }
+        """,
+        "size": (300, 100),
+        "position": (480, 360),
+        "word_wrap": True,
+        "default_text": "You: "
+    },
+    "ai_response": {
+        "style": """
+            QLabel {
+                color: white;
+                background-color: rgba(0,0,0,200);
+                border-radius: 5px;
+                padding: 8px;
+                font: 12px;
+            }
+        """,
+        "size": (300, 100),
+        "position": (20, 360),
+        "word_wrap": True,
+        "default_text": "Assistant: Ready"
+    }
+}
+
+# Camera Handler Configuration
+CAMERA_CONFIG = {
+    # Camera resolution
+    'RESOLUTION': {
+        'WIDTH': 1920,
+        'HEIGHT': 1080
+    },
+
+    # Image settings
+    'IMAGE': {
+        'QUALITY': 90,
+        'SAVE_DIRECTORY': r"/tmp/AIAssistant/",
+        'FILENAME': "captured_image.jpg"
+    },
+
+    # Camera parameters
+    'PARAMETERS': {
+        'EXPOSURE': 10000,
+        'GAIN': 1.0,
+        'FRAME_RATE': 30,
+        'FRAME_DURATION': 33333
+    },
+
+    # Camera controls
+    'CONTROLS': {
+        'AWB_ENABLE': True,
+        'AE_ENABLE': True,
+        'FOCUS_MODE': 'continuous',
+        'HFLIP': 1,
+        'VFLIP': 1,
+        'COLOR_FORMAT': "RGB888"
+    }
+}
+
+# IO Manager Configuration
+IO_CONFIG = {
+    # Thread settings
+    'TIMING': {
+        'CAMERA_THREAD_TIMEOUT': 0.5,
+        'FRAME_INTERVAL': 0.03,  # 30fps
+        'AUDIO_RECORD_TIMEOUT': 5
+    },
+
+    # Interface settings
+    'INTERFACE': {
+        'WAKE_WORD': "hey david",
+        'MAX_ATTEMPTS': 3,
+        'WINDOWS': {
+            'CAMERA': "camera window",
+            'AI': "ai window",
+            'USER_INPUT': "user input window"
+        }
+    },
+
+    # Keywords for commands
+    'KEYWORDS': {
+        'MODE': {
+            'SPEECH': ["speech", "voice", "audio", "speak", "one", "1"],
+            'IMAGE': ["image", "picture", "photo", "text", "two", "2"],
+            'BOTH': ["both", "combined", "all", "three", "3"]
+        },
+        'COMMANDS': {
+            'START': ['start', 'begin', 'launch', 'activate', 'open'],
+            'STOP': ['stop', 'end', 'finish', 'quit'],
+            'TRANSLATE': ['translate', 'convert', 'change', 'interpret'],
+            'EXIT': ['exit', 'quit', 'close', 'leave']
+        }
+    },
+
+    # Language settings
+    'SUPPORTED_LANGUAGES': {
+        'arabic': 'ar',
+        'english': 'en',
+        'french': 'fr',
+        'spanish': 'es',
+        'german': 'de'
+    }
+}
+
+# OCR Configuration
+OCR_CONFIG = {
+    'MODES': {
+        'DEFAULT': '--oem 3 --psm 3',
+        'ACCURATE': '--oem 3 --psm 6'
+    },
+
+    'PROCESSING': {
+        'LEVEL': 'medium',
+        'THRESH_VALUE': 150,
+        'KERNEL_SIZE': (1, 1),
+        'DENOISE_H': 10,
+        'MAX_VALUE': 255
+    },
+
+    'STORAGE': {
+        'SAVE_DIRECTORY': r"/tmp/AIAssistant/",
+        'PROCESSED_FRAME_FILENAME': "processed_frame.jpg"
+    }
+}
+
+# Machine Learning Configuration
+ML_CONFIG = {
+    'TRANSLATION': {
+        'TRANSLATION_MODELS_DIR': './models/translation',
+        'MODEL_NAMES': {
+            'en-ar': 'Helsinki-NLP/opus-mt-en-ar',  # English to Arabic
+            'fr-en': 'Helsinki-NLP/opus-mt-fr-en',  # French to English
+            'ar-en': 'Helsinki-NLP/opus-mt-ar-en',  # Arabic to English
+        },
+        'MODELS_LOAD_TIMEOUT': 300,
+        'MODELS_DIR': './models/translation/cache',
+        'SUPPORTED_SPEECH_MODELS': ['en'],
+        'SUPPORTED_TRANSLATION_PAIRS': [
+            ('en', 'ar'),  # English to Arabic
+            ('fr', 'en'),  # French to English
+            ('ar', 'en')   # Arabic to English
+        ],
+        'MAX_WORKERS': 2,
+        'USE_LOW_MEMORY': True,
+        'TORCH_DTYPE': 'float32'
+    }
+}
+
+# Services Configuration
+SERVICES_CONFIG = {
+    'LANGUAGES': {
+        'SUPPORTED': ['en', 'ar', 'fr'],
+        'MAPPING': {
+            'english': 'en',
+            'arabic': 'ar',
+            'french': 'fr'
+        }
+    },
+
+    'RECOGNITION': {
+        'VOSK_MODEL_PATH': './models/vosk',
+        'VOSK_MODELS': {
+            'en': 'vosk-model-small-en-us'
+        },
+        'RECOGNITION_MODEL_DIR': './models/recognition',
+        'FUZZY_CONFIDENCE_THRESHOLD': 75
+    }
+}
+
+# LLM Configuration
+LLM_CONFIG = {
+    'PROMPTS': {
+        'SUPPORTED': {
+            'translate': "tr",
+            'extract': "ex"
+        }
+    }
+}
+
+# Network Manager Configuration
+NETWORK_CONFIG = {
+    # Server connection settings
+    'SERVER_IP': '192.168.1.65',
+    'SERVER_PORT': 4040,
+    'SOCKET_TIMEOUT': 5,  # seconds
+    'MAX_RETRIES': 3,
+    'RETRY_DELAY': 1,  # seconds
+    'CONNECTION_CHECK_INTERVAL': 10,  # seconds
+
+    # Request settings
+    'REQUEST_TIMEOUT': 30,  # seconds
+    'MAX_PAYLOAD_SIZE': 10 * 1024 * 1024,  # 10MB max payload size
+    'CHUNK_SIZE': 4096,  # bytes
+
+    # Supported data types
+    'DATA_TYPES': ['text', 'image', 'text_and_image'],
+
+    # Response settings
+    'RESPONSE_TIMEOUT': 30,  # seconds
+
+    # Status checks
+    'STATUS_CHECK_URLS': ['https://www.google.com', 'https://www.cloudflare.com'],
+    'STATUS_CHECK_PORT': 80,
+    'STATUS_CHECK_TIMEOUT': 2.0,  # seconds
+
+    # Threading
+    'THREAD_JOIN_TIMEOUT': 1.0,  # seconds
+
+    # Debug options
+    'VERBOSE_LOGGING': False,
+    'LOG_PAYLOADS': False,  # Be careful with this in production!
+}
+
+# User Preferences
+user_config = {
+    "source_language": "english",
+    "target_language": "arabic",
+    "tool_detection": "image",
+    "if_online": True,
+}
+
+# User Commands
+user_commands = {
+    "exit_command": {
+        "quit", "exit", "stop", "close", "terminate", "shutdown"
+    },
+    "wake_word": {
+        "hey david", "hi david", "hello david", "david", "assistant"
+    },
+    "hide_widget_command": {
+        "hide", "minimize", "collapse", "conceal", "shrink"
+    },
+    "show_widget_command": {
+        "show", "expand", "reveal", "display", "enlarge"
+    },
+}
+
+

@@ -1,16 +1,16 @@
 import os
 import threading
 import time
-from IO_Manager.IO_Handlers.GUI_Handler import GUI_Handler
-from IO_Manager.IO_Handlers.Camera_Handler import CameraHandler
-from IO_Manager.IO_Handlers.Audio_Handler import AudioHandler
-from utils.logging import Logger
-from utils.config import OVERLAY_WIDGET_CONFIGS, user_config, user_commands, IO_CONFIG
-from utils.services import Services
+from Handlers import GUIHandler
+from Handlers import CameraHandler
+from Handlers import AudioHandler
+from utils.Logging import Logger
+from utils.Config import IO_CONFIG
+from utils.Services import Services
 
 class IOManager:
     def __init__(self):
-        self.gui = GUI_Handler()
+        self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
         self.recognizer = Services(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
@@ -71,7 +71,7 @@ class IOManager:
                 frame = self.camera.capture_frame()
 
                 if frame is not None:
-                    # Forward the frame to GUI_Handler
+                    # Forward the frame to GUIHandler
                     self.gui.update_camera_frame(frame)
                     frame_count += 1
 

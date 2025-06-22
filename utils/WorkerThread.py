@@ -1,6 +1,6 @@
 import threading
 import time
-from utils.logging import Logger
+from utils.Logging import Logger
 
 class BaseWorkerThread:
     """Base class for worker threads with callback capability"""

@@ -3,8 +3,8 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QWidget, QVBoxLayout, QSizePolicy)
 from PyQt5.QtGui import QPixmap, QPainter, QImage
 import cv2
-from utils.config import OVERLAY_WIDGET_CONFIGS
-from utils.logging import Logger
+from utils.Config import OVERLAY_WIDGET_CONFIGS
+from utils.Logging import Logger
 from utils.WorkerThread import WorkerThread
 
 # Check if on Raspberry Pi or development machine
@@ -53,7 +53,7 @@ class CommunicationSignals(QObject):
             return getattr(self, signal_name)
         return None
 
-class Qt_Handler:
+class QtHandler:
     """
     Handles all Qt GUI-related functionality.
     This class provides a unified interface for creating and managing
@@ -93,11 +93,6 @@ class Qt_Handler:
         except Exception as e:
             self.logger.log_error_with_traceback("Qt_Handler initialization failed", e)
             raise
-
-    def set_io_manager(self, io_manager):
-        """Set the IO_Manager reference"""
-        self.io_manager = io_manager
-        self.logger.info("IO_Manager reference set in Qt_Handler")
 
     def create_window(self, title="AR Glasses Assistant", fullscreen=True):
         """
@@ -220,21 +215,6 @@ class Qt_Handler:
         except Exception as e:
             self.logger.error(f"Error updating camera frame: {e}")
 
-    def capture_image(self, filename=None):
-        """
-        Capture an image using IO_Manager
-
-        Args:
-            filename (str, optional): Path to save the image
-
-        Returns:
-            str: Path to saved image or None if failed
-        """
-        if not self.io_manager:
-            self.logger.warning("Cannot capture image: IO_Manager not set")
-            return None
-
-        return self.io_manager.capture_image(filename)
 
     def create_overlay_widget(self, widget_type, config=None):
         """
@@ -325,7 +305,7 @@ class Qt_Handler:
                 signal = self.signals.get_signal(signal_name)
                 if not signal:
                     signal = self.signals.create_signal(signal_name)
-                signal.connect(lambda text: self.update_widget_text(widget, text))
+                signal.connect(lambda text: self._update_widget_text(widget, text))
 
             # Show the widget
             widget.show()
@@ -361,17 +341,7 @@ class Qt_Handler:
             "ai_response": self.ai_response_label if hasattr(self, "ai_response_label") else None
         }
 
-    def check_status(self):
-        """Default status check implementation - override if needed"""
-        # This would typically call into a network service to check connectivity
-        # For now, we'll just keep the status as is
-        pass
-
     def update_status(self, status_text, is_online=None):
-        """Alias for _update_network_status to maintain compatibility"""
-        return self._update_network_status(status_text, is_online)
-
-    def _update_network_status(self, status_text, is_online=None):
         """
         Update the status display
 
@@ -398,10 +368,6 @@ class Qt_Handler:
             return False
 
     def update_user_speech(self, text):
-        """Alias for _update_user_speech to maintain compatibility"""
-        return self._update_user_speech(text)
-
-    def _update_user_speech(self, text):
         """Update the user speech display with the given text"""
         self.logger.debug(f"Updating user speech: '{text}'")
 
@@ -417,10 +383,6 @@ class Qt_Handler:
             return False
 
     def update_ai_response(self, text):
-        """Alias for _update_ai_response to maintain compatibility"""
-        return self._update_ai_response(text)
-
-    def _update_ai_response(self, text):
         """Update the AI response display with the given text"""
         self.logger.debug(f"Updating AI response: '{text}'")
 
@@ -460,255 +422,9 @@ class Qt_Handler:
                 self.logger.warning(f"No widget found with type: {widget_instance}")
                 return False
 
-        return self.update_widget_text(widget_instance, text)
-
-    def capture_image(self, filename=None):
-        """
-        Capture an image using IO_Manager
-
-        Args:
-            filename (str, optional): Path to save the image
-
-        Returns:
-            str: Path to saved image or None if failed
-        """
-        if not self.io_manager:
-            self.logger.warning("Cannot capture image: IO_Manager not set")
-            return None
-
-        return self.io_manager.capture_image(filename)
-
-    def create_overlay_widget(self, widget_type, config=None):
-        """
-        Create and configure an overlay widget based on the specified type and configuration
-
-        Args:
-            widget_type (str): Type identifier for the widget
-            config (dict, optional): Configuration for the widget
-
-        Returns:
-            QWidget: The created widget instance
-        """
-        self.logger.debug(f"Creating overlay widget: {widget_type}")
-        start_time = time.time()
-
-        if not self.main_window:
-            self.logger.warning(f"Cannot create {widget_type} overlay: main_window is None")
-            return None
-
-        try:
-            # Get default configuration for this widget type
-            default_config = OVERLAY_WIDGET_CONFIGS.get(widget_type, {})
-
-            # Merge with custom config if provided
-            widget_config = default_config.copy()
-            if config:
-                widget_config.update(config)
-
-            # Create label widget
-            widget = QLabel(self.main_window)
-
-            # Apply styling
-            if "style" in widget_config:
-                widget.setStyleSheet(widget_config["style"])
-
-            # Set alignment
-            if "alignment" in widget_config:
-                alignment = widget_config["alignment"]
-                if alignment == "center":
-                    widget.setAlignment(Qt.AlignCenter)
-                elif alignment == "left":
-                    widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                elif alignment == "right":
-                    widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-            # Set size
-            if "size" in widget_config:
-                widget.setFixedSize(*widget_config["size"])
-
-            # Set position
-            if "position" in widget_config:
-                widget.move(*widget_config["position"])
-
-            # Set word wrap
-            if widget_config.get("word_wrap", False):
-                widget.setWordWrap(True)
-
-            # Set default text
-            if "default_text" in widget_config:
-                widget.setText(widget_config["default_text"])
-
-            # Make label ignore mouse events if configured
-            if widget_config.get("transparent_for_mouse", True):
-                widget.setAttribute(Qt.WA_TransparentForMouseEvents)
-
-            # Raise widget to top
-            widget.raise_()
-
-            # Store reference in the overlay_widgets dictionary
-            widget_id = f"{widget_type}_{id(widget)}"
-            self.overlay_widgets[widget_id] = {
-                "widget": widget,
-                "type": widget_type,
-                "config": widget_config
-            }
-
-            # For backward compatibility
-            if widget_type == "status":
-                self.status_label = widget
-            elif widget_type == "user_speech":
-                self.user_speech_label = widget
-            elif widget_type == "ai_response":
-                self.ai_response_label = widget
-
-            # Connect signals if defined in config
-            if "signal" in widget_config and hasattr(self, 'signals'):
-                signal_name = widget_config["signal"]
-                signal = self.signals.get_signal(signal_name)
-                if not signal:
-                    signal = self.signals.create_signal(signal_name)
-                signal.connect(lambda text: self.update_widget_text(widget, text))
-
-            # Show the widget
-            widget.show()
-
-            # Log performance
-            duration = time.time() - start_time
-            self.logger.log_performance(f"create_{widget_type}_overlay", duration)
-            self.logger.debug(f"{widget_type} overlay created successfully", duration=f"{duration:.3f}s")
-
-            return widget
-
-        except Exception as e:
-            self.logger.log_error_with_traceback(f"Error creating {widget_type} overlay widget", e)
-            return None
-
-    def create_overlay_widgets(self):
-        """Create and configure the standard overlay elements"""
-        self.logger.debug("Creating all standard overlay widgets")
-
-        # Create the three standard widgets
-        self.create_overlay_widget("status")
-        self.create_overlay_widget("user_speech")
-        self.create_overlay_widget("ai_response")
-
-        # Start status check timer
-        self.status_check_timer = QTimer(self.main_window)
-        self.status_check_timer.timeout.connect(self.check_status)
-        self.status_check_timer.start(1000)  # Check every second
-
-        return {
-            "status": self.status_label if hasattr(self, "status_label") else None,
-            "user_speech": self.user_speech_label if hasattr(self, "user_speech_label") else None,
-            "ai_response": self.ai_response_label if hasattr(self, "ai_response_label") else None
-        }
-
-    def check_status(self):
-        """Default status check implementation - override if needed"""
-        # This would typically call into a network service to check connectivity
-        # For now, we'll just keep the status as is
-        pass
-
-    def update_status(self, status_text, is_online=None):
-        """Alias for _update_network_status to maintain compatibility"""
-        return self._update_network_status(status_text, is_online)
-
-    def _update_network_status(self, status_text, is_online=None):
-        """
-        Update the status display
-
-        Args:
-            status_text (str): Status text to display
-            is_online (bool, optional): If provided, adds ONLINE/OFFLINE indicator
-        """
-        if not hasattr(self, 'status_label'):
-            self.logger.warning("Cannot update status: status_label not initialized")
-            return False
-
-        try:
-            if is_online is not None:
-                status = "ONLINE" if is_online else "OFFLINE"
-                status_msg = f"{status_text} [{status}]"
-                self.status_label.setText(status_msg)
-                self.logger.debug(f"Updated status with connection state: {status_msg}")
-            else:
-                self.status_label.setText(status_text)
-                self.logger.debug(f"Updated status: {status_text}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to update status: {str(e)}")
-            return False
-
-    def update_user_speech(self, text):
-        """Alias for _update_user_speech to maintain compatibility"""
-        return self._update_user_speech(text)
-
-    def _update_user_speech(self, text):
-        """Update the user speech display with the given text"""
-        self.logger.debug(f"Updating user speech: '{text}'")
-
-        if not hasattr(self, 'user_speech_label'):
-            self.logger.warning("Cannot update user speech: user_speech_label not initialized")
-            return False
-
-        try:
-            self.user_speech_label.setText(f"You: {text}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to update user speech: {str(e)}")
-            return False
-
-    def update_ai_response(self, text):
-        """Alias for _update_ai_response to maintain compatibility"""
-        return self._update_ai_response(text)
-
-    def _update_ai_response(self, text):
-        """Update the AI response display with the given text"""
-        self.logger.debug(f"Updating AI response: '{text}'")
-
-        if not hasattr(self, 'ai_response_label'):
-            self.logger.warning("Cannot update AI response: ai_response_label not initialized")
-            return False
-
-        try:
-            self.ai_response_label.setText(f"Assistant: {text}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to update AI response: {str(e)}")
-            return False
-
-    def display_text_in_widget(self, text, widget_instance):
-        """
-        Display text in the specified widget instance
-
-        Args:
-            text (str): Text to display
-            widget_instance (QWidget): Widget instance or widget_type string to update
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        # If widget_instance is a string, try to find the widget by type
-        if isinstance(widget_instance, str):
-            found_widget = None
-            for widget_id, info in self.overlay_widgets.items():
-                if info["type"] == widget_instance:
-                    found_widget = info["widget"]
-                    break
-
-            if found_widget:
-                widget_instance = found_widget
-            else:
-                self.logger.warning(f"No widget found with type: {widget_instance}")
-                return False
-
-        return self.update_widget_text(widget_instance, text)
+        return self._update_widget_text(widget_instance, text)
 
     def hide_widget(self, widget_instance):
-        """Alias for hide_overlay_widget to maintain compatibility"""
-        return self.hide_overlay_widget(widget_instance)
-
-    def hide_overlay_widget(self, widget_instance):
         """
         Hide the specified widget
 
@@ -730,10 +446,6 @@ class Qt_Handler:
             return False
 
     def hide_all_widgets(self):
-        """Alias for hide_all_overlay_widgets to maintain compatibility"""
-        return self.hide_all_overlay_widgets()
-
-    def hide_all_overlay_widgets(self):
         """
         Hide all overlay widgets
 
@@ -838,10 +550,6 @@ class Qt_Handler:
             task_name = getattr(worker, 'task_name', 'unknown')
             self.logger.debug(f"Cleaning up worker thread: {task_name}")
             self.worker_threads.remove(worker)
-
-    def get_camera_widget(self):
-        """Get the camera widget instance"""
-        return self.camera_widget
 
     def toggle_fullscreen(self):
         """Toggle between fullscreen and windowed mode"""
@@ -952,7 +660,6 @@ class Qt_Handler:
         except Exception as e:
             self.logger.log_error_with_traceback("Error during Qt_Handler cleanup", e)
 
-    # Add this new method to the Qt_Handler class
     def delete_overlay_widget(self, widget_instance):
         """
         Permanently delete an overlay widget from the application.
@@ -1018,7 +725,7 @@ class Qt_Handler:
             self.logger.error(f"Failed to delete widget: {str(e)}")
             return False
 
-    def update_widget_text(self, widget_instance, text):
+    def _update_widget_text(self, widget_instance, text):
         """
         Universal method to update any widget's text
 
