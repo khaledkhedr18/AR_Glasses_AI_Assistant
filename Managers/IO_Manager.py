@@ -1,187 +1,99 @@
-import os
 import threading
 import time
 from Handlers import GUIHandler
 from Handlers import CameraHandler
 from Handlers import AudioHandler
 from utils.Logging import Logger
-from utils.Config import IO_CONFIG
+from utils.Config import IO_CONFIG, SERVICES_CONFIG
 from utils.Services import Services
 
+
+# This module handles all I/O operations including camera, audio, and GUI interactions.
 class IOManager:
     def __init__(self):
+        """
+        Initializes the IO Manager with necessary components and configurations.
+        """
+        self.logger = Logger()
+        self.logger.info("Initializing IO Handler")
+
+        # Initialize handlers for GUI, Camera, Audio, and Services
         self.gui = GUIHandler()
         self.camera = CameraHandler()
         self.audio = AudioHandler()
-        self.recognizer = Services(IO_CONFIG['RECOGNIZER_MODEL_PATH'])
-        self.logger = Logger()
-        self.wake_word = IO_CONFIG['WAKE_WORD']
-        self.supported_languages = IO_CONFIG['SUPPORTED_LANGUAGES']
+        self.service = Services()
+
+        # Initialize configuration parameters
+        self.__load_config()
+
+        # Initialize state variables
         self.camera_running = False
         self.camera_thread = None
         self.frame_captured = None
         self.audio_running = False
         self.recorded_audio = None
+
+        # Locks for thread safety
         self.camera_lock = threading.Lock()
         self.audio_lock = threading.Lock()
         self.interaction_lock = threading.Lock()
-        self.frame_interval = IO_CONFIG.get('FRAME_INTERVAL', 0.03)
-        self.config = IO_CONFIG
 
     def start_camera_stream(self):
-        """
-        Start camera streaming in a separate thread.
-
-        This method initializes the camera and starts a thread that
-        continuously captures frames and updates the GUI.
-
-        Returns:
-            bool: True if the stream was started, False otherwise
-        """
-        with self.camera_lock:
-            if self.camera_running and self.camera_thread and self.camera_thread.is_alive():
-                self.logger.info("Camera stream already running")
-                return False
-
-            # Initialize the camera if needed
-            if not self.initialize_camera():
-                self.logger.error("Failed to initialize camera")
-                return False
-
-            self.camera_running = True
-            self.camera_thread = threading.Thread(target=self._stream_camera_frames)
-            self.camera_thread.daemon = True
-            self.logger.info("Starting camera stream thread")
-            self.camera_thread.start()
-
-    def _stream_camera_frames(self):
-        """
-        Private method to handle continuous camera streaming.
-
-        This method captures frames from the camera and forwards them
-        to the GUI for display.
-        """
-        self.logger.info("Camera streaming thread started")
-        frame_count = 0
-        start_time = time.time()
-
-        while self.camera_running:
-            try:
-                # Capture a frame from camera handler
-                frame = self.camera.capture_frame()
-
-                if frame is not None:
-                    # Forward the frame to GUIHandler
-                    self.gui.update_camera_frame(frame)
-                    frame_count += 1
-
-                # Control frame rate
-                time.sleep(self.frame_interval)
-
-            except Exception as e:
-                self.logger.error(f"Error in camera streaming thread: {e}")
-                if self.camera_running:
-                    # Log FPS before exiting due to error
-                    elapsed = time.time() - start_time
-                    fps = frame_count / elapsed if elapsed > 0 else 0
-                    self.logger.info(f"Camera stream ended with error. Processed {frame_count} frames at {fps:.2f} FPS")
-                break
-
-        # Log performance metrics when stopping normally
-        elapsed = time.time() - start_time
-        fps = frame_count / elapsed if elapsed > 0 else 0
-        self.logger.info(f"Camera stream stopped. Processed {frame_count} frames at {fps:.2f} FPS")
-
-
-    def stop_camera_stream(self):
-        """
-        Stop the camera streaming thread.
-
-        Returns:
-            bool: True if the stream was stopped, False otherwise
-        """
+        """Starts camera stream in a separate thread with 30ms interval"""
         with self.camera_lock:
             if not self.camera_running:
+                self.camera_running = True
+                self.camera_thread = threading.Thread(target=self.__stream_camera)
+                self.camera_thread.daemon = True
+                self.logger.info("Starting camera stream thread")
+                self.camera_thread.start()
+            else:
+                self.logger.info("Camera stream already running")
+
+    def stop_camera_stream(self):
+        """Stops the camera stream thread and hides the camera window"""
+        with self.camera_lock:
+            if self.camera_running:
+                self.logger.info("Stopping camera stream")
+                self.camera_running = False  # This will break the while loop in __stream_camera
+                if self.camera_thread and self.camera_thread.is_alive():
+                    self.camera_thread.join(timeout=self.camera_thread_timeout)  # Wait up to configurable seconds for thread to finish
+                    self.logger.info("Camera thread stopped")
+
+                # show black screen in camera widget
+
+                self.camera_thread = None
+                self.frame_captured = None
+            else:
                 self.logger.info("Camera stream already stopped")
-                return True
-
-            self.logger.info("Stopping camera stream")
-            self.camera_running = False
-
-            # Wait for the thread to terminate
-            if self.camera_thread and self.camera_thread.is_alive():
-                timeout = self.config.get('CAMERA_THREAD_TIMEOUT', 2.0)
-                self.camera_thread.join(timeout=timeout)
-
-            self.camera_thread = None
-            return True
 
     def get_image(self):
         with self.camera_lock:
             if self.camera_running:
+                self.logger.warning("Camera not running, cannot capture image")
                 return self.camera.capture_and_save_image()
             self.logger.warning("Camera not running, cannot capture image")
             return None
 
-    def start_audio_listening(self, mode="offline"):
-        """
-        Start listening for audio input.
-
-        Args:
-            mode (str): "online" to save to file, "offline" to keep in memory
-
-        Returns:
-            bool: True if started successfully
-        """
+    def start_audio_listening(self):
         with self.audio_lock:
             if not self.audio_running:
-                self.logger.info(f"Starting audio recording in {mode} mode")
-                success = self.audio.start_recording(mode)
-                if success:
-                    self.audio_running = True
-                return success
-            return False
+                self.logger.info("Starting audio recording")
+                self.audio.start_recording()
+                self.audio_running = True
 
     def stop_audio_listening(self):
-        """
-        Stop listening for audio input.
-
-        Returns:
-            Audio data or file path depending on recording mode
-        """
         with self.audio_lock:
             if self.audio_running:
                 self.logger.info("Stopping audio recording")
-                audio_result = self.audio.stop_recording()
+                self.recorded_audio = self.audio.stop_recording()
                 self.audio_running = False
-                return audio_result
-            return None
 
-    def get_user_audio(self, mode="offline", duration=5):
-        """
-        Get user audio synchronously.
-
-        Args:
-            mode (str): "online" to save to file, "offline" to return data
-            duration (int): Recording duration in seconds
-
-        Returns:
-            Audio data (offline) or file path (online)
-        """
+    def get_user_audio(self):
         with self.audio_lock:
             if self.audio_running:
-                self.logger.warning("Audio recording already in progress")
-                return None
-
-            # Start recording
-            if not self.start_audio_listening(mode):
-                return None
-
-            # Wait for the specified duration
-            time.sleep(duration)
-
-            # Stop recording and get the result
-            return self.stop_audio_listening()
+                return self.recorded_audio
+            return None
 
     def interact_with_user(self, text, mode="both"):
         """
@@ -197,7 +109,7 @@ class IOManager:
 
                 if mode in ["display", "both"]:
                     self.logger.info(f"AI: {text}")
-                    self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], text)
+                    self.gui.display_text_in_widget(IO_CONFIG.get('INTERFACE', {}).get('WINDOWS', {}).get('AI', ''), text)
 
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in user interaction", e)
@@ -207,6 +119,7 @@ class IOManager:
         Interactive configuration through voice conversation with AI agent
         Returns: dict with source_lang, dest_lang, and translation_mode
         """
+        max_attempts = IO_CONFIG.get('INTERFACE', {}).get('MAX_ATTEMPTS', '')  # Maximum number of retry attempts
 
         config = {
             'source_lang': None,
@@ -214,136 +127,100 @@ class IOManager:
             'translation_mode': None
         }
 
-        def wait_for_wake_word():
-            prompt = f"Please say the wake word '{IO_CONFIG['WAKE_WORD']}' to start configuration."
-            self.audio.output_speech(prompt)
+        def __wait_for_wake_word():
+            """
+            Waits for the user to say the wake word to start configuration
+            """
+            prompt = f"Please say the wake word '{self.wake_word}' to start configuration."
             self.logger.info(prompt)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
-            while True:
-                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if text and IO_CONFIG['WAKE_WORD'] in text:
-                    return True
-                time.sleep(0.1)
+            self.interact_with_user(prompt)
 
-        def get_language_input(prompt):
-            self.audio.output_speech(prompt)
-            self.logger.info(prompt)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
-            while True:
-                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if text:
-                    for lang, code in IO_CONFIG['SUPPORTED_LANGUAGES'].items():
-                        if lang in text:
-                            return code
-                time.sleep(0.1)
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
+            if not self.recorded_audio:
+                return None
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
+            if text:
+                return self.service.verify_user_input(text, self.wake_word) is not None
 
-        def get_translation_mode():
-            prompt = "What do you want to translate? (speech, image, or image with prompt)"
-            self.audio.output_speech(prompt)
+            return False
+
+        def __get_user_language(prompt):
+            """
+            Asks user for language input (source and target languages) and returns the recognized language code
+            """
             self.logger.info(prompt)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], prompt)
-            self.recorded_audio = self.__record_with_timer(IO_CONFIG['AUDIO_RECORD_TIMEOUT'])
-            while True:
-                text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
-                if text:
-                    if 'image' in text and 'speech' in text:
-                        return 'both'
-                    elif 'image' in text:
-                        return 'image'
-                    elif 'speech' in text:
-                        return 'speech'
-                time.sleep(0.1)
+            self.interact_with_user(prompt)
+
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
+            if not self.recorded_audio:
+                return None
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
+            if text:
+                return self.service.verify_user_input(text, self.supported_languages)
+            return None
+
+        def __get_user_mode(prompt):
+            """
+            Asks user for translation mode and returns the selected mode (speech, image, or both)
+            """
+            self.logger.info(prompt)
+            self.interact_with_user(prompt)
+
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
+            if not self.recorded_audio:
+                return None
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
+            if text:
+                return self.service.verify_user_input(text, self.mode_keywords)
+            return None
+
+        def __retry_input(input_func, prompt, attempt=1):
+            """Helper function to handle retries for input functions"""
+            result = input_func(prompt)
+            if not result and attempt < max_attempts:
+                retry_message = f"Could not understand. Please try again. ({attempt + 1}/{max_attempts})"
+                self.interact_with_user(retry_message)
+                return __retry_input(input_func, prompt, attempt + 1)
+            elif not result:
+                restart_message = "Maximum attempts reached. Please say the wake word to start over."
+                self.interact_with_user(restart_message)
+                return None
+            return result
 
         # Start conversation flow
-        if wait_for_wake_word():
-            message = "Wake word detected! Starting configuration..."
-            self.logger.info(message)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], message)
-            self.audio.output_speech(message)
+        if not __wait_for_wake_word():
+            return None
 
-            # Get source language
-            config['source_lang'] = get_language_input("What is the source language?")
+        message = "Wake word detected! Starting configuration..."
+        self.logger.info(message)
+        self.interact_with_user(message)
 
-            # Get target language
-            config['dest_lang'] = get_language_input("What is the target language?")
+        # Get source language
+        source_lang = __retry_input(__get_user_language, "What is the source language?")
+        if not source_lang:
+            self.logger.error("Failed to recognize source language after multiple attempts")
+            return None
+        config['source_lang'] = source_lang
 
-            # Get translation mode
-            config['translation_mode'] = get_translation_mode()
+        # Get target language
+        dest_lang = __retry_input(__get_user_language, "What is the target language?")
+        if not dest_lang:
+            self.logger.error("Failed to recognize destination language after multiple attempts")
+            return None
+        config['dest_lang'] = dest_lang
 
-            # Display final configuration
-            final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
-            self.logger.info(final_config)
-            self.gui.display_text_in_widget(IO_CONFIG['AI_WINDOW_NAME'], final_config)
-            self.audio.output_speech(final_config)
+        # Get translation mode
+        translation_mode = __retry_input(__get_user_mode, "What do you want to translate? (speech, image, or image with prompt)")
+        if not translation_mode:
+            self.logger.error("Failed to recognize translation mode after multiple attempts")
+            return None
+        config['translation_mode'] = translation_mode
 
-            return config if all(config.values()) else None
-
-        return None
-
-    def capture_frame(self):
-        """
-        Capture a single frame from the camera.
-
-        Returns:
-            numpy.ndarray: The captured frame
-        """
-        return self.camera.capture_frame()
-
-    def capture_image(self, filename=None):
-        """
-        Capture an image and save it to a file.
-
-        Args:
-            filename (str, optional): Path to save the image
-
-        Returns:
-            str: Path to the saved image file
-        """
-        self.logger.info(f"IO_Manager: Capturing image to {filename or 'auto-generated file'}")
-        if hasattr(self.camera, 'capture_image'):
-            return self.camera.capture_image(filename)
-        elif hasattr(self.camera, 'capture_and_save_image'):
-            return self.camera.capture_and_save_image()
-        return None
-
-    def initialize_camera(self):
-        """
-        Initialize and start the camera.
-
-        Returns:
-            bool: True if the camera was initialized successfully, False otherwise
-        """
-        self.logger.info("IO_Manager: Initializing camera")
-        if hasattr(self.camera, 'initialize_camera'):
-            return self.camera.initialize_camera()
-        return True  # Assume camera is ready if no initialize method
-
-    def process_image(self, image, processing_level="medium"):
-        """
-        Process an image for better text recognition.
-
-        Args:
-            image: Image path or array
-            processing_level (str): "low", "medium", or "high"
-
-        Returns:
-            numpy.ndarray: Processed image
-        """
-        self.logger.info(f"IO_Manager: Processing image with level '{processing_level}'")
-        if hasattr(self.camera, 'process_image'):
-            return self.camera.process_image(image, processing_level)
-        return image
-
-    def set_camera_parameters(self, **kwargs):
-        """Set camera parameters (exposure, gain, focus mode)."""
-        self.logger.info(f"IO_Manager: Setting camera parameters: {kwargs}")
-        if hasattr(self.camera, 'set_camera_parameters'):
-            return self.camera.set_camera_parameters(**kwargs)
-        elif hasattr(self.camera, 'set_camera_configurations'):
-            return self.camera.set_camera_configurations(**kwargs)
-        return False
+        # Display final configuration
+        final_config = f"Configuration set:\nFrom: {config['source_lang']}\nTo: {config['dest_lang']}\nMode: {config['translation_mode']}"
+        self.logger.info(final_config)
+        self.interact_with_user(final_config)
+        return config if all(config.values()) else None
 
     def get_user_command(self):
         """
@@ -353,12 +230,12 @@ class IOManager:
 
         try:
             # Record audio for 5 seconds
-            self.recorded_audio = self.__record_with_timer(5)
+            self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
             if not self.recorded_audio:
                 return None
 
             # Convert speech to text
-            text = self.recognizer.recognize_text_from_speech(self.recorded_audio)
+            text = self.service.recognize_text_from_speech(self.recorded_audio)
             if not text:
                 return None
 
@@ -367,7 +244,7 @@ class IOManager:
             self.logger.info(f"Recognized command: {text}")
 
             # Check for command keywords
-            for command, keywords in IO_CONFIG['COMMAND_KEYWORDS'].items():
+            for command, keywords in self.command_keywords.items():
                 if any(keyword in text for keyword in keywords):
                     return command
 
@@ -376,10 +253,6 @@ class IOManager:
         except Exception as e:
             self.logger.info(f"Error processing command: {e}")
             return None
-    def create_window(self, title="AR Glasses Assistant", fullscreen=True):
-        """Create the main application window."""
-        window = self.gui.create_window(title=title, fullscreen=fullscreen)
-        return window
 
     def display_text(self, label, text):
         # Updates GUI with text
@@ -458,16 +331,25 @@ class IOManager:
                     self.audio_running = False
                 return None
 
-    # Add this new method to the IOManager class
-    def delete_overlay_widget(self, widget_instance):
-        """
-        Permanently delete an overlay widget from the GUI.
+    def __stream_camera(self):
+        """Private method to handle continuous camera streaming"""
+        while self.camera_running:  # Will stop when camera_running becomes False
+            try:
+                if not self.camera_running:  # Double check in case flag changed
+                    break
+                self.frame_captured = self.camera.capture_frame()
+                self.gui.display_image_in_widget(IO_CONFIG.get('INTERFACE', {}).get('WINDOWS', {}).get('CAMERA', ''), self.frame_captured)
+                time.sleep(self.frame_interval)  # 30ms interval
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error in camera stream", e)
+                self.camera_running = False  # Ensure we exit on error
+                break
 
-        Args:
-            widget_instance: The widget to delete
-
-        Returns:
-            bool: True if deletion was successful, False otherwise
-        """
-        self.logger.info("Deleting overlay widget")
-        return self.gui.delete_overlay_widget(widget_instance)
+    def __load_config(self):
+        self.wake_word = IO_CONFIG.get('USER_COMMAND', {}).get('WAKE_WORD', 'Hi David')
+        self.supported_languages = SERVICES_CONFIG.get('LANGUAGES', {}).get('MAPPING', {})
+        self.frame_interval = IO_CONFIG.get('FRAME_INTERVAL', 0.03)
+        self.camera_thread_timeout = IO_CONFIG.get('CAMERA_THREAD_TIMEOUT', 2.0)
+        self.audio_record_timeout = IO_CONFIG.get('TIMING', {}).get('AUDIO_RECORD_TIMEOUT', 5)
+        self.mode_keywords = IO_CONFIG.get('USER_COMMANDS', {}).get('MODE', {})
+        self.command_keywords = IO_CONFIG.get('USER_COMMANDS', {}).get('COMMANDS', {})

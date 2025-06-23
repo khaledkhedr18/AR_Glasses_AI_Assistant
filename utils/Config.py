@@ -96,7 +96,6 @@ IO_CONFIG = {
 
     # Interface settings
     'INTERFACE': {
-        'WAKE_WORD': "hey david",
         'MAX_ATTEMPTS': 3,
         'WINDOWS': {
             'CAMERA': "camera window",
@@ -105,18 +104,30 @@ IO_CONFIG = {
         }
     },
 
-    # Keywords for commands
-    'KEYWORDS': {
-        'MODE': {
-            'SPEECH': ["speech", "voice", "audio", "speak", "one", "1"],
-            'IMAGE': ["image", "picture", "photo", "text", "two", "2"],
-            'BOTH': ["both", "combined", "all", "three", "3"]
+    # User Commands
+    'USER_COMMANDS' : {
+        # Keywords for commands
+        'KEYWORDS': {
+            'MODE': {
+                'SPEECH': ["speech", "voice", "audio", "speak", "one", "1"],
+                'IMAGE': ["image", "picture", "photo", "text", "two", "2"],
+                'BOTH': ["both", "combined", "all", "three", "3"]
         },
         'COMMANDS': {
             'START': ['start', 'begin', 'launch', 'activate', 'open'],
             'STOP': ['stop', 'end', 'finish', 'quit'],
             'TRANSLATE': ['translate', 'convert', 'change', 'interpret'],
-            'EXIT': ['exit', 'quit', 'close', 'leave']
+            'EXIT': ["quit", "exit", "stop", "close", "terminate", "shutdown"]
+        },
+
+        "WAKE_WORD": {
+            "hey david", "hi david", "hello david", "david", "assistant"
+        },
+        "HIDE_WIDGET_COMMAND": {
+            "hide", "minimize", "collapse", "conceal", "shrink"
+        },
+        "SHOW_WIDGET_COMMAND": {
+            "show", "expand", "reveal", "display", "enlarge"
         }
     },
 
@@ -125,10 +136,10 @@ IO_CONFIG = {
         'arabic': 'ar',
         'english': 'en',
         'french': 'fr',
-        'spanish': 'es',
-        'german': 'de'
     }
 }
+}
+
 
 # OCR Configuration
 OCR_CONFIG = {
@@ -160,8 +171,8 @@ ML_CONFIG = {
             'fr-en': 'Helsinki-NLP/opus-mt-fr-en',  # French to English
             'ar-en': 'Helsinki-NLP/opus-mt-ar-en',  # Arabic to English
         },
-        'MODELS_LOAD_TIMEOUT': 300,
-        'MODELS_DIR': './models/translation/cache',
+        'MODELS_LOAD_TIMEOUT': 30,
+        'MODELS_CACHE_DIR': './models/translation/cache',
         'SUPPORTED_SPEECH_MODELS': ['en'],
         'SUPPORTED_TRANSLATION_PAIRS': [
             ('en', 'ar'),  # English to Arabic
@@ -170,7 +181,7 @@ ML_CONFIG = {
         ],
         'MAX_WORKERS': 2,
         'USE_LOW_MEMORY': True,
-        'TORCH_DTYPE': 'float32'
+
     }
 }
 
@@ -186,11 +197,10 @@ SERVICES_CONFIG = {
     },
 
     'RECOGNITION': {
-        'VOSK_MODEL_PATH': './models/vosk',
+        'VOSK_MODEL_DIR': './models/vosk',
         'VOSK_MODELS': {
             'en': 'vosk-model-small-en-us'
         },
-        'RECOGNITION_MODEL_DIR': './models/recognition',
         'FUZZY_CONFIDENCE_THRESHOLD': 75
     }
 }
@@ -246,21 +256,3 @@ user_config = {
     "tool_detection": "image",
     "if_online": True,
 }
-
-# User Commands
-user_commands = {
-    "exit_command": {
-        "quit", "exit", "stop", "close", "terminate", "shutdown"
-    },
-    "wake_word": {
-        "hey david", "hi david", "hello david", "david", "assistant"
-    },
-    "hide_widget_command": {
-        "hide", "minimize", "collapse", "conceal", "shrink"
-    },
-    "show_widget_command": {
-        "show", "expand", "reveal", "display", "enlarge"
-    },
-}
-
-
