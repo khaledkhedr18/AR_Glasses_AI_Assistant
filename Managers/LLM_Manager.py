@@ -1,16 +1,16 @@
-import os
 import gc
-import torch
+import os
 import threading
-import numpy as np
-from vosk import Model
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from transformers import MarianMTModel, MarianTokenizer
+import numpy as np
+from transformers import pipeline
+from vosk import Model
+
 from Handlers.OCR_Handler import OCRHandler
 from Handlers.Translation_Handler import TranslationHandler
-from utils.config import ML_CONFIG, LLM_CONFIG, SERVICES_CONFIG
-from utils.Services import Services
+from utils.Config import ML_CONFIG, SERVICES_CONFIG, LLM_CONFIG
 from utils.Logging import Logger
+from utils.Services import Services
 
 
 class LLMManager:
@@ -21,120 +21,111 @@ class LLMManager:
 
     class __ModelLoader:
         """Private model loader handler for managing ML models.
-        Implements singleton pattern to prevent multiple model loading."""
+        Allows multiple instances but loads models only once."""
 
-        # Singleton instance and state management
-        _instance = None
-        _instance_lock = threading.Lock()
+        # Class-level variables for shared resources
+        __models_load_lock = threading.Lock()  # Lock for model loading
+        __models_loaded = False  # Flag to track if models are loaded
 
-        # Model management
-        _models_initialized = False
-        _initialization_lock = threading.Lock()
-        _loading_complete = threading.Event()
+        # Shared model storage across all instances
+        __speech_models = {}  # Stores speech recognition models
+        __translation_pipelines = {}  # Stores translation pipelines
 
-        # Global model storage
-        _speech_models = {}
-        _translation_models = {}
-
-        def __new__(cls):
-            """Ensure single instance creation (thread-safe)"""
-            if cls._instance is None:
-                with cls._instance_lock:
-                    if cls._instance is None:
-                        cls._instance = super(LLMManager.__ModelLoader, cls).__new__(cls)
-            return cls._instance
+        # Class-level event for tracking loading completion
+        __loading_complete = threading.Event()
 
         def __init__(self):
-            """Initialize handler with memory-optimized settings (thread-safe)"""
-            if self._models_initialized:
-                return
+            """Initialize handler instance with shared resources"""
+            # Initialize instance-specific attributes
+            self.service = Services()
+            self.logger = Logger()
+            self.logger.info("Initializing Model Loader Handler")
 
-            with self._initialization_lock:
-                if not self._models_initialized:
-                    self.logger = Logger()
-                    self.logger.info("Initializing Model Loader Handler")
+            # Core configuration initialization
+            self.__load_config()
 
-                    # Core components initialization
-                    self.service = Services()
-                    # Updated to dictionary access
-                    self.models_dir = ML_CONFIG['TRANSLATION']['TRANSLATION_MODELS_DIR']
-                    self.recognizer_model_path = SERVICES_CONFIG['RECOGNITION']['RECOGNITION_MODEL_DIR']
-                    self.model_timeout = ML_CONFIG['TRANSLATION']['MODELS_LOAD_TIMEOUT']
-
-                    # Load models only if not already loaded
-                    self.__load_models()
-                    self._models_initialized = True
-                    self.logger.info("Model Loader Handler initialization completed")
-
-        def get_translation_model(self, source_lang, target_lang):
-            """Get translation model from cache"""
-            if not self._loading_complete.wait(timeout=self.model_timeout):
-                self.logger.error("Model loading timeout exceeded")
-                return None, None, False
-
-            src_code = self.service.get_language_code(source_lang)
-            tgt_code = self.service.get_language_code(target_lang)
-
-            if not src_code or not tgt_code:
-                self.logger.error(f"Invalid language codes: {source_lang}, {target_lang}")
-                return None, None, False
-
-            pair = (src_code, tgt_code)
-            # Updated to dictionary access
-            if pair not in ML_CONFIG['TRANSLATION']['SUPPORTED_TRANSLATION_PAIRS']:
-                self.logger.error(f"Unsupported translation pair: {pair}")
-                return None, None, False
-
-            model_key = f"{src_code}-{tgt_code}"
-            model_pair = self._translation_models.get(model_key)
-
-            return (*model_pair, True) if model_pair else (None, None, False)
-
-        def get_speech_model(self, language):
-            """Get speech model from cache"""
-            if not self._loading_complete.wait(timeout=self.model_timeout):
-                self.logger.error("Model loading timeout exceeded")
-                return None, False
-
-            lang_code = self.service.get_language_code(language)
-            # Updated to dictionary access
-            if not lang_code or lang_code not in ML_CONFIG['TRANSLATION']['SUPPORTED_SPEECH_MODELS']:
-                self.logger.error(f"Unsupported speech language: {language}")
-                return None, False
-
-            model = self._speech_models.get(lang_code)
-            return (model, True) if model else (None, False)
-
-        def __load_models(self):
-            """Initialize and load models if not already loaded (thread-safe)"""
-            if self._loading_complete.is_set():
-                self.logger.info("Models already loaded, using existing models")
-                return
-
-            with self._initialization_lock:
-                if not self._loading_complete.is_set():
+            # Load models only for first instance
+            with self.__models_load_lock:
+                if not self.__models_loaded:
                     try:
-                        gc.collect()
-                        torch.cuda.empty_cache() if torch.cuda.is_available() else None
-
-                        self.__ensure_model_directories()
-                        self.__preload_all_models()
-
-                        self._loading_complete.set()
+                        self.__load_models()
+                        self.__class__.__models_loaded = True
+                        self.__loading_complete.set()
                         self.logger.info("Initial model loading completed successfully")
                     except Exception as e:
                         self.logger.error(f"Model loading failed: {str(e)}")
-                        self._loading_complete.clear()
+                        self.__loading_complete.clear()
                         raise
+
+        def __load_config(self):
+            """Load configuration settings for models"""
+            translation_config = ML_CONFIG.get('TRANSLATION', {})
+            recognition_config = SERVICES_CONFIG.get('RECOGNITION', {})
+
+            # Initialize configuration attributes with default values and expand paths
+            self.models_cache_dir = os.path.expanduser(translation_config.get('MODELS_CACHE_DIR', './models/cache'))
+            self.models_dir = os.path.expanduser(translation_config.get('TRANSLATION_MODELS_DIR', './models/translation'))
+            self.models_load_timeout = translation_config.get('MODELS_LOAD_TIMEOUT', 30)
+            self.supported_translation_pairs = translation_config.get('SUPPORTED_TRANSLATION_PAIRS', [])
+            self.supported_speech_models = translation_config.get('SUPPORTED_SPEECH_MODELS', [])
+
+            # Expand the tilde in the path
+            self.recognizer_model_path = os.path.expanduser(recognition_config.get('VOSK_MODEL_DIR', './models/vosk'))
+
+        def get_translation_model(self, source_lang: str, target_lang: str) -> tuple:
+            """Get translation pipeline from shared storage
+
+            Args:
+                source_lang: Source language code
+                target_lang: Target language code
+
+            Returns:
+                tuple: (pipeline, tokenizer, success_flag)
+            """
+            if not self.__loading_complete.wait(timeout=self.models_load_timeout):
+                self.logger.error("Model loading timeout exceeded")
+                return None, None, False
+
+            model_key = f"{source_lang}-{target_lang}"
+            translation_pipeline = self.__translation_pipelines.get(model_key)
+
+            return (translation_pipeline, None, True) if translation_pipeline else (None, None, False)
+
+        def get_speech_model(self, language: str) -> tuple:
+            """Get speech model from shared storage
+
+            Args:
+                language: Language code
+
+            Returns:
+                tuple: (model, success_flag)
+            """
+            if not self.__loading_complete.wait(timeout=self.models_load_timeout):
+                self.logger.error("Model loading timeout exceeded")
+                return None, False
+
+            model = self.__speech_models.get(language)
+            return (model, True) if model else (None, False)
+
+        def __load_models(self):
+            """Initialize and load models into shared storage"""
+            try:
+                gc.collect()  # Clean memory before loading
+                self.__ensure_model_directories()
+                self.__preload_all_models()
+
+            except Exception as e:
+                self.logger.error(f"Model loading failed: {str(e)}")
+                raise
 
         def __ensure_model_directories(self):
             """Create and verify required model directories"""
             directories = [
-                self.models_dir,
                 self.recognizer_model_path,
-                # Updated to dictionary access
-                ML_CONFIG['TRANSLATION']['MODELS_DIR']
+                self.models_dir,
+                self.models_cache_dir
             ]
+
             for directory in directories:
                 try:
                     os.makedirs(directory, exist_ok=True)
@@ -150,28 +141,24 @@ class LLMManager:
             loading_tasks = []
 
             try:
-                # Updated to dictionary access
-                with ThreadPoolExecutor(max_workers=ML_CONFIG['TRANSLATION']['MAX_WORKERS']) as executor:
+                with ThreadPoolExecutor(max_workers=ML_CONFIG.get('MAX_WORKERS', 2)) as executor:
+                    # Load speech recognition model
                     speech_model_path = os.path.join(
-                        # Updated to dictionary access
-                        SERVICES_CONFIG['RECOGNITION']['VOSK_MODEL_PATH'],
-                        SERVICES_CONFIG['RECOGNITION']['VOSK_MODELS']['en']
+                        SERVICES_CONFIG.get('RECOGNITION', {}).get('VOSK_MODEL_DIR', ''),
+                        SERVICES_CONFIG.get('RECOGNITION', {}).get('VOSK_MODELS', {}).get('en', '')
                     )
                     loading_tasks.append(
                         executor.submit(self.__load_speech_model, 'en', speech_model_path)
                     )
 
-                    # Updated to dictionary access
-                    for src_lang, tgt_lang in ML_CONFIG['TRANSLATION']['SUPPORTED_TRANSLATION_PAIRS']:
+                    # Load translation models
+                    for src_lang, tgt_lang in self.supported_translation_pairs:
                         loading_tasks.append(
-                            executor.submit(
-                                self.__load_translation_model,
-                                src_lang,
-                                tgt_lang
-                            )
+                            executor.submit(self.__load_translation_model, src_lang, tgt_lang)
                         )
-                        gc.collect()
+                        gc.collect()  # Clean memory after each model load
 
+                    # Wait for all loading tasks to complete
                     for future in as_completed(loading_tasks):
                         try:
                             future.result()
@@ -183,10 +170,15 @@ class LLMManager:
                 self.logger.error(f"Model loading process failed: {str(e)}")
                 raise
 
-        def __load_speech_model(self, language, model_path):
-            """Load speech recognition model"""
+        def __load_speech_model(self, language: str, model_path: str):
+            """Load speech recognition model into shared storage
+
+            Args:
+                language: Language code
+                model_path: Path to model files
+            """
             try:
-                if language in self._speech_models:
+                if language in self.__speech_models:
                     self.logger.info(f"Speech model already loaded for: {language}")
                     return
 
@@ -194,75 +186,82 @@ class LLMManager:
                     raise FileNotFoundError(f"Speech model not found: {model_path}")
 
                 model = Model(model_path)
-                with self._initialization_lock:
-                    self._speech_models[language] = model
+                with self.__models_load_lock:
+                    self.__speech_models[language] = model
                     self.logger.info(f"Speech model loaded: {language}")
 
             except Exception as e:
                 self.logger.error(f"Speech model loading failed: {str(e)}")
                 raise
 
-        def __load_translation_model(self, src_lang, tgt_lang):
-            """Load translation model"""
+        def __load_translation_model(self, src_lang: str, tgt_lang: str):
+            """Load translation model into shared storage
+
+            Args:
+                src_lang: Source language code
+                tgt_lang: Target language code
+            """
             try:
                 model_key = f"{src_lang}-{tgt_lang}"
 
-                if model_key in self._translation_models:
-                    self.logger.info(f"Translation model already loaded for: {model_key}")
+                if model_key in self.__translation_pipelines:
+                    self.logger.info(f"Translation pipeline already loaded for: {model_key}")
                     return
 
-                # Updated to dictionary access
-                model_name = ML_CONFIG['TRANSLATION']['MODEL_NAMES'].get(model_key)
+                model_name = ML_CONFIG.get('TRANSLATION', {}).get('MODEL_NAMES', {}).get(model_key)
                 if not model_name:
                     raise ValueError(f"No model name found for language pair: {model_key}")
 
-                # Updated to dictionary access for torch_dtype and cache_dir
-                torch_dtype_str = ML_CONFIG['TRANSLATION']['TORCH_DTYPE']
-                model = MarianMTModel.from_pretrained(
-                    model_name,
-                    torch_dtype=getattr(torch, torch_dtype_str),
-                    cache_dir=ML_CONFIG['TRANSLATION']['MODELS_DIR'],
-                    low_cpu_mem_usage=True,
-                    return_dict=False
+                # Set low_cpu_mem_usage to False to avoid requiring accelerate library
+                use_low_memory = ML_CONFIG.get('TRANSLATION', {}).get('USE_LOW_MEMORY', True)
+
+                # Check if accelerate is available
+                try:
+                    import accelerate
+                    have_accelerate = True
+                except ImportError:
+                    have_accelerate = False
+                    use_low_memory = False
+                    self.logger.warning("Accelerate library not found, disabling low_cpu_mem_usage")
+
+                translation_pipeline = pipeline(
+                    "translation",
+                    model=model_name,
+                    model_kwargs={
+                        "cache_dir": self.models_cache_dir,
+                        "low_cpu_mem_usage": use_low_memory and have_accelerate
+                    }
                 )
 
-                tokenizer = MarianTokenizer.from_pretrained(
-                    model_name,
-                    cache_dir=ML_CONFIG['TRANSLATION']['MODELS_DIR'],
-                    model_max_length=512
-                )
-
-                with self._initialization_lock:
-                    self._translation_models[model_key] = (model, tokenizer)
-                    self.logger.info(f"Translation model loaded: {model_key}")
+                with self.__models_load_lock:
+                    self.__translation_pipelines[model_key] = translation_pipeline
+                    self.logger.info(f"Translation pipeline loaded: {model_key}")
 
             except Exception as e:
-                self.logger.error(f"Translation model loading failed: {str(e)}")
+                self.logger.error(f"Translation pipeline loading failed: {str(e)}")
                 raise
 
         def cleanup(self):
-            """Clean up resources"""
-            with self._initialization_lock:
+            """Clean up resources and models from shared storage"""
+            with self.__models_load_lock:
                 try:
-                    for model in list(self._speech_models.values()):
+                    # Clean speech models
+                    for model in self.__speech_models.values():
                         if hasattr(model, '__del__'):
                             model.__del__()
-                    self._speech_models.clear()
+                    self.__speech_models.clear()
 
-                    for model_pair in list(self._translation_models.values()):
-                        if model_pair:
-                            del model_pair[0]
-                            del model_pair[1]
-                    self._translation_models.clear()
+                    # Clean translation pipelines
+                    self.__translation_pipelines.clear()
 
-                    self.__class__._models_initialized = False
-                    self._loading_complete.clear()
+                    # Reset loading state
+                    self.__class__.__models_loaded = False
+                    self.__loading_complete.clear()
 
+                    # Force garbage collection
                     gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-
                     self.logger.info("All models unloaded and memory cleaned")
+
                 except Exception as e:
                     self.logger.error(f"Cleanup failed: {str(e)}")
                     raise
@@ -278,12 +277,11 @@ class LLMManager:
         self.ocr_handler = OCRHandler()
         self.service = Services()
 
-        # Supported prompt types - Updated to dictionary access
-        self.prompts_supported = LLM_CONFIG['PROMPTS']['SUPPORTED']
+        # Supported prompt types
+        self.prompts_supported = LLM_CONFIG.get('PROMPTS', {}).get('SUPPORTED', {})
 
         self.logger.info("LLM_Manager initialized successfully")
 
-    # Rest of the LLMManager methods remain unchanged
     def process_user_inputs(self, user_config, input_data):
         """Process and translate multimedia input based on user configuration"""
         self.logger.info(f"Starting translation with mode: {user_config['translation_mode']}")
@@ -306,6 +304,15 @@ class LLMManager:
         except Exception as e:
             self.logger.error(f"Translation failed: {str(e)}")
             return None
+
+    def get_speech_model(self, src_language="en"):
+        speech_model = self.__model_loader.get_speech_model(src_language)
+        return speech_model
+
+    def get_translation_model(self, src_language=None, tgt_language=None):
+        translation_model = self.__model_loader.get_translation_model(src_language, tgt_language)
+        return translation_model
+
 
     def __setup_translation_environment(self, user_config):
         """Setup translation environment and validate models"""
@@ -436,7 +443,7 @@ class LLMManager:
         else:
             self.logger.warning(f"Unsupported command: {command}")
             result['success'] = False
-            result['operation_type'] = 'unknown'
+            result['operation_type'] = None
 
         return result
 

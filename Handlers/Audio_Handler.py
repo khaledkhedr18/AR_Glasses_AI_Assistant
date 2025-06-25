@@ -5,7 +5,6 @@ import threading
 import os
 import scipy.io.wavfile as wavfile
 from datetime import datetime
-from vosk import KaldiRecognizer
 from utils.Logging import Logger
 from utils.WorkerThread import create_worker
 

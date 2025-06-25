@@ -5,7 +5,8 @@ from PyQt5.QtGui import QPixmap, QPainter, QImage
 import cv2
 from utils.Config import OVERLAY_WIDGET_CONFIGS
 from utils.Logging import Logger
-from utils.WorkerThread import WorkerThread
+from utils.WorkerThread import create_worker
+
 
 # Check if on Raspberry Pi or development machine
 try:
@@ -376,7 +377,7 @@ class QtHandler:
             return False
 
         try:
-            self.user_speech_label.setText(f"You: {text}")
+            self.user_speech_label.setText(f"{text}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to update user speech: {str(e)}")
@@ -523,27 +524,24 @@ class QtHandler:
     def create_worker(self, task_func, *args, task_name=None):
         """
         Create a worker thread for background tasks
-
-        Args:
-            task_func: Function to run
-            *args: Arguments to pass to the function
-            task_name: Optional task name for logging
-
-        Returns:
-            WorkerThread: The created worker thread
         """
         name = task_name or task_func.__name__
         self.logger.debug(f"Creating worker thread for task: {name}")
 
         try:
-            worker = WorkerThread(task_func, *args, task_name=name)
-            worker.finished.connect(lambda: self.cleanup_worker(worker))
+            # Use the imported create_worker function
+            worker = create_worker(
+                task_func,
+                *args,
+                task_name=name,
+                worker_type="qt"
+            )
+            worker.finished_signal.connect(lambda: self.cleanup_worker(worker))
             self.worker_threads.append(worker)
             return worker
         except Exception as e:
             self.logger.error(f"Failed to create worker thread: {str(e)}")
             return None
-
     def cleanup_worker(self, worker):
         """Remove a worker thread from the tracking list when it finishes"""
         if worker in self.worker_threads:
@@ -724,6 +722,29 @@ class QtHandler:
         except Exception as e:
             self.logger.error(f"Failed to delete widget: {str(e)}")
             return False
+
+    def check_status(self):
+        """
+        Periodically check system status and update the status label
+        Called automatically by the status_check_timer
+        """
+        try:
+            # Check if we're online
+            is_online = True  # You can replace this with actual network check
+
+            # You can add additional status checks here:
+            # - Network connectivity
+            # - Camera status
+            # - Audio device status
+            # etc.
+
+            # Update the status display
+            if hasattr(self, 'status_label'):
+                current_status = "System operational"
+                self.update_status(current_status, is_online)
+
+        except Exception as e:
+            self.logger.error(f"Error in status check: {str(e)}")
 
     def _update_widget_text(self, widget_instance, text):
         """

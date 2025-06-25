@@ -1,8 +1,8 @@
 import threading
 import time
-from Handlers import GUIHandler
-from Handlers import CameraHandler
-from Handlers import AudioHandler
+from Handlers.GUI_Handler import GUIHandler
+from Handlers.Camera_Handler import CameraHandler
+from Handlers.Audio_Handler import AudioHandler
 from utils.Logging import Logger
 from utils.Config import IO_CONFIG, SERVICES_CONFIG
 from utils.Services import Services
@@ -10,7 +10,7 @@ from utils.Services import Services
 
 # This module handles all I/O operations including camera, audio, and GUI interactions.
 class IOManager:
-    def __init__(self):
+    def __init__(self, speech_model):
         """
         Initializes the IO Manager with necessary components and configurations.
         """
@@ -37,6 +37,7 @@ class IOManager:
         self.camera_lock = threading.Lock()
         self.audio_lock = threading.Lock()
         self.interaction_lock = threading.Lock()
+        self.speech_model = speech_model
 
     def start_camera_stream(self):
         """Starts camera stream in a separate thread with 30ms interval"""
@@ -227,25 +228,36 @@ class IOManager:
         Records audio and determines the command from user's voice input
         Returns: str - The command to execute ('start', 'stop', 'translate', 'exit')
         """
-
         try:
             # Record audio for 5 seconds
             self.recorded_audio = self.__record_with_timer(self.audio_record_timeout)
-            if not self.recorded_audio:
+
+            # Explicitly check for None instead of using "not" which can cause issues with numpy arrays
+            if self.recorded_audio is None:
                 return None
 
             # Convert speech to text
-            text = self.service.recognize_text_from_speech(self.recorded_audio)
-            if not text:
+            text = self.service.recognize_text_from_speech(self.recorded_audio, self.speech_model)
+            if text is None:
                 return None
 
             # Convert to lowercase for better matching
             text = text.lower()
             self.logger.info(f"Recognized command: {text}")
 
-            # Check for command keywords
+            # IMPORTANT: Display the recognized text in the GUI
+            self.gui.update_user_speech(f"You: {text}")
+
+            # Check for command keywords with explicit boolean checks to avoid numpy array issues
             for command, keywords in self.command_keywords.items():
-                if any(keyword in text for keyword in keywords):
+                # Safe comparison with explicit loop rather than "any()" to avoid boolean ambiguity
+                match_found = False
+                for keyword in keywords:
+                    if keyword in text:
+                        match_found = True
+                        break
+
+                if match_found:
                     return command
 
             return None
@@ -338,7 +350,9 @@ class IOManager:
                 if not self.camera_running:  # Double check in case flag changed
                     break
                 self.frame_captured = self.camera.capture_frame()
-                self.gui.display_image_in_widget(IO_CONFIG.get('INTERFACE', {}).get('WINDOWS', {}).get('CAMERA', ''), self.frame_captured)
+                if self.frame_captured is not None:
+                    # Use update_camera_frame instead of display_image_in_widget for raw frames
+                    self.gui.update_camera_frame(self.frame_captured)
                 time.sleep(self.frame_interval)  # 30ms interval
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in camera stream", e)
@@ -353,3 +367,78 @@ class IOManager:
         self.audio_record_timeout = IO_CONFIG.get('TIMING', {}).get('AUDIO_RECORD_TIMEOUT', 5)
         self.mode_keywords = IO_CONFIG.get('USER_COMMANDS', {}).get('MODE', {})
         self.command_keywords = IO_CONFIG.get('USER_COMMANDS', {}).get('COMMANDS', {})
+
+    def create_main_window(self, title="AR Glasses Assistant", fullscreen=True):
+        """
+        Creates the main application window
+
+        Args:
+            title (str): The window title
+            fullscreen (bool): Whether to display in fullscreen mode
+
+        Returns:
+            QMainWindow: Reference to the created window
+        """
+        self.logger.info(f"Creating main window: title='{title}', fullscreen={fullscreen}")
+        return self.gui.create_window(title, fullscreen)
+
+    def create_all_overlay_widgets(self):
+        """
+        Creates all standard overlay widgets (status, user_speech, ai_response)
+
+        Returns:
+            dict: Dictionary with references to all created widgets
+        """
+        self.logger.info("Creating all standard overlay widgets")
+        return self.gui.create_overlay_widgets()
+
+    def create_custom_overlay_widget(self, widget_type, config=None):
+        """
+        Creates a custom overlay widget with specific type and configuration
+
+        Args:
+            widget_type (str): Type identifier for the widget
+            config (dict, optional): Configuration parameters for the widget
+
+        Returns:
+            QWidget: Reference to the created widget
+        """
+        self.logger.debug(f"Creating custom overlay widget: {widget_type}")
+        return self.gui.create_overlay_widget(widget_type, config)
+
+    def show_overlay_widget(self, widget_instance):
+        """
+        Shows a previously hidden overlay widget
+
+        Args:
+            widget_instance: Widget reference to show
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return self.gui.show_widget(widget_instance)
+
+    def hide_overlay_widget(self, widget_instance):
+        """
+        Hides an overlay widget
+
+        Args:
+            widget_instance: Widget reference to hide
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return self.gui.hide_widget(widget_instance)
+
+    def delete_overlay_widget(self, widget_instance):
+        """
+        Permanently removes an overlay widget from the application
+
+        Args:
+            widget_instance: Widget reference to delete
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return self.gui.delete_overlay_widget(widget_instance)
+
