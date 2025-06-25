@@ -91,7 +91,7 @@ IO_CONFIG = {
     'TIMING': {
         'CAMERA_THREAD_TIMEOUT': 0.5,
         'FRAME_INTERVAL': 0.03,  # 30fps
-        'AUDIO_RECORD_TIMEOUT': 5
+        'AUDIO_RECORD_TIMEOUT': 3
     },
 
     # Interface settings
@@ -180,7 +180,7 @@ ML_CONFIG = {
             ('ar', 'en')   # Arabic to English
         ],
         'MAX_WORKERS': 2,
-        'USE_LOW_MEMORY': True,
+        'USE_LOW_MEMORY': False,
 
     }
 }
@@ -197,9 +197,9 @@ SERVICES_CONFIG = {
     },
 
     'RECOGNITION': {
-        'VOSK_MODEL_DIR': './models/vosk',
+        'VOSK_MODEL_DIR': '../models/vosk',
         'VOSK_MODELS': {
-            'en': 'vosk-model-small-en-us'
+            'en': 'vosk-model-small-en-us-0.15'
         },
         'FUZZY_CONFIDENCE_THRESHOLD': 75
     }
@@ -255,4 +255,23 @@ user_config = {
     "target_language": "arabic",
     "tool_detection": "image",
     "if_online": True,
+}
+
+# Application Configuration
+APP_CONFIG = {
+    'DISPLAY': {
+        'FULLSCREEN': True,
+        'RESOLUTION': (800, 600),
+        'THEME': 'dark',
+        'OPACITY': 0.9
+    },
+    'APPLICATION': {
+        'NAME': 'AR Glasses Assistant',
+        'VERSION': '0.1.0',
+        'AUTO_START': True
+    },
+    'PERFORMANCE': {
+        'LOW_RESOURCE_MODE': False,
+        'LOG_PERFORMANCE': True
+    }
 }

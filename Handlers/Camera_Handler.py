@@ -2,42 +2,52 @@ import os
 import cv2
 from picamera2 import Picamera2
 import libcamera
-from utils.Config import CameraConfig
+from utils.Config import CAMERA_CONFIG
 from utils.Logging import Logger
+import threading
 
 
 class CameraHandler:
     """Handles camera operations with simplified access control and frame buffering."""
 
-    # Class-level variables for singleton camera instance
-    _camera_initialized = False
+    # Class-level variables for shared resources
+    _camera_init_lock = threading.Lock()  # Lock for camera initialization
+    _camera_initialized = False  # Flag to track if camera is initialized
+    _camera_busy_lock = threading.Lock()  # Lock for camera busy state
     _picam2 = None  # Shared camera instance
     _initialization_error = None
-    _camera_busy = False  # Class-level camera busy state
+    _camera_busy = False  # Shared camera busy state
+
+    # Class-level event for tracking initialization completion
+    _initialization_complete = threading.Event()
 
     def __init__(self):
         """Initialize Camera Handler with configurations and frame buffer."""
         self.logger = Logger()
         self.logger.info("Initializing Camera Handler")
 
-        # Frame buffer for busy state handling
+        # Instance-specific attributes
         self.frame_buffer = None
 
-        # Configure camera settings from CameraConfig
-        self.capture_width = CameraConfig.RESOLUTION['WIDTH']
-        self.capture_height = CameraConfig.RESOLUTION['HEIGHT']
-        self.quality = CameraConfig.IMAGE['QUALITY']
-        self.save_dir = CameraConfig.IMAGE['SAVE_DIRECTORY']
-        self.saved_image_name = CameraConfig.IMAGE['FILENAME']
-        self.image_save_path = None
+        # Load configuration
+        self.__load_config()
 
-        # Create save directory if it doesn't exist
-        os.makedirs(self.save_dir, exist_ok=True)
+        # Initialize camera only for first instance
+        with self._camera_init_lock:
+            if not self._camera_initialized:
+                try:
+                    self.__initialize_camera()
+                    self.__class__._camera_initialized = True
+                    self._initialization_complete.set()
+                    self.logger.info("Initial camera initialization completed successfully")
+                except Exception as e:
+                    self.logger.error(f"Camera initialization failed: {str(e)}")
+                    self._initialization_complete.clear()
+                    self._initialization_error = str(e)
+                    raise
 
-        # Initialize camera if not already initialized
-        if not CameraHandler._camera_initialized and not CameraHandler._initialization_error:
-            self.__initialize_camera()
-        self.picam2 = CameraHandler._picam2
+        # Use shared camera instance
+        self.picam2 = self._picam2
 
     def capture_frame(self):
         """
@@ -46,22 +56,27 @@ class CameraHandler:
         Returns:
             numpy.ndarray or None: Captured/buffered frame or None if failed
         """
-        # Return buffered frame if camera is busy
-        if CameraHandler._camera_busy:
-            return self.frame_buffer
+        if not self._initialization_complete.wait(timeout=5):  # 5 seconds timeout
+            self.logger.error("Camera initialization timeout exceeded")
+            return None
 
-        try:
-            CameraHandler._camera_busy = True
-            if self.picam2:
-                frame = self.picam2.capture_array("main")
-                self.frame_buffer = frame  # Update frame buffer
-                return frame
-            return None
-        except Exception as e:
-            self.logger.log_error_with_traceback("Error capturing frame", e)
-            return None
-        finally:
-            CameraHandler._camera_busy = False
+        # Return buffered frame if camera is busy
+        with self._camera_busy_lock:
+            if self._camera_busy:
+                return self.frame_buffer
+
+            try:
+                self._camera_busy = True
+                if self.picam2:
+                    frame = self.picam2.capture_array("main")
+                    self.frame_buffer = frame  # Update frame buffer
+                    return frame
+                return None
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error capturing frame", e)
+                return None
+            finally:
+                self._camera_busy = False
 
     def capture_and_save_image(self):
         """
@@ -70,32 +85,36 @@ class CameraHandler:
         Returns:
             str or None: Path to saved image or None if failed
         """
-        # Use buffered frame if camera is busy
-        if CameraHandler._camera_busy and self.frame_buffer is not None:
-            try:
-                self.image_save_path = os.path.join(self.save_dir, self.saved_image_name)
-                cv2.imwrite(self.image_save_path, self.frame_buffer,
-                            [cv2.IMWRITE_JPEG_QUALITY, self.quality])
-                return self.image_save_path
-            except Exception as e:
-                self.logger.log_error_with_traceback("Error saving buffered image", e)
-                return None
+        if not self._initialization_complete.wait(timeout=5):
+            self.logger.error("Camera initialization timeout exceeded")
+            return None
 
-        try:
-            CameraHandler._camera_busy = True
-            if self.picam2:
-                frame = self.picam2.capture_array("main")
-                self.frame_buffer = frame  # Update frame buffer
-                self.image_save_path = os.path.join(self.save_dir, self.saved_image_name)
-                cv2.imwrite(self.image_save_path, frame,
-                            [cv2.IMWRITE_JPEG_QUALITY, self.quality])
-                return self.image_save_path
-            return None
-        except Exception as e:
-            self.logger.log_error_with_traceback("Error capturing and saving image", e)
-            return None
-        finally:
-            CameraHandler._camera_busy = False
+        # Use buffered frame if camera is busy
+        with self._camera_busy_lock:
+            if self._camera_busy and self.frame_buffer is not None:
+                try:
+                    cv2.imwrite(self.image_save_path, self.frame_buffer,
+                                [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+                    return self.image_save_path
+                except Exception as e:
+                    self.logger.log_error_with_traceback("Error saving buffered image", e)
+                    return None
+
+            try:
+                self._camera_busy = True
+                if self.picam2:
+                    frame = self.picam2.capture_array("main")
+                    self.frame_buffer = frame  # Update frame buffer
+
+                    cv2.imwrite(self.image_save_path, frame,
+                                [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+                    return self.image_save_path
+                return None
+            except Exception as e:
+                self.logger.log_error_with_traceback("Error capturing and saving image", e)
+                return None
+            finally:
+                self._camera_busy = False
 
     def set_camera_configurations(self, exposure=None, gain=None, focus_mode=None):
         """
@@ -109,6 +128,10 @@ class CameraHandler:
         Returns:
             bool: True if successful, False otherwise
         """
+        if not self._initialization_complete.wait(timeout=5):
+            self.logger.error("Camera initialization timeout exceeded")
+            return False
+
         if not self.picam2:
             self.logger.warning("Camera not initialized, cannot set configurations")
             return False
@@ -128,7 +151,8 @@ class CameraHandler:
                     controls["AfMode"] = libcamera.controls.AfModeEnum.Manual
 
             if controls:
-                self.picam2.set_controls(controls)
+                with self._camera_busy_lock:
+                    self.picam2.set_controls(controls)
                 self.logger.info("Camera configurations updated successfully")
             return True
         except Exception as e:
@@ -138,53 +162,78 @@ class CameraHandler:
     @classmethod
     def cleanup(cls):
         """Clean up camera resources when shutting down."""
-        if cls._picam2 and cls._camera_initialized:
-            try:
-                cls._picam2.stop()
-                cls._picam2.close()
-                cls._picam2 = None
-                cls._camera_initialized = False
-                cls._initialization_error = None
-            except Exception as e:
-                print(f"Error during camera cleanup: {e}")
-
+        with cls._camera_init_lock:
+            if cls._picam2 and cls._camera_initialized:
+                try:
+                    cls._picam2.stop()
+                    cls._picam2.close()
+                    cls._picam2 = None
+                    cls._camera_initialized = False
+                    cls._initialization_error = None
+                    cls._initialization_complete.clear()
+                except Exception as e:
+                    print(f"Error during camera cleanup: {e}")
 
     def __initialize_camera(self):
-        """Initialize the camera with configured settings from CameraConfig."""
+        """Initialize the camera with configured settings."""
         try:
-            if not CameraHandler._picam2:
-                CameraHandler._picam2 = Picamera2()
+            if not self._picam2:
+                self._picam2 = Picamera2()
 
-                # Configure camera
-                camera_config = {
-                    "size": (self.capture_width, self.capture_height),
-                    "format": CameraConfig.CONTROLS['COLOR_FORMAT']
+                # Create a camera configuration first with correct structure
+                # The size parameter should be inside the main dictionary, not a separate parameter
+                preview_config = self._picam2.create_preview_configuration(
+                    main={
+                        "format": CAMERA_CONFIG.get('CONTROLS', {}).get('COLOR_FORMAT', 'RGB888'),
+                        "size": (self.capture_width, self.capture_height)  # Put size inside the main dict
+                    }
+                )
+
+                # Apply the configuration
+                self._picam2.configure(preview_config)
+
+                # Get parameters and controls from config
+                params = CAMERA_CONFIG.get('PARAMETERS', {})
+                controls = CAMERA_CONFIG.get('CONTROLS', {})
+
+                # Set camera controls from config with defaults
+                control_settings = {
+                    "ExposureTime": params.get('EXPOSURE', 10000),
+                    "AnalogueGain": params.get('GAIN', 1.0),
+                    "FrameDurationLimits": (
+                        params.get('FRAME_DURATION', 33333),
+                        params.get('FRAME_DURATION', 33333)
+                    ),
+                    "FrameRate": params.get('FRAME_RATE', 30),
+                    "AeEnable": controls.get('AE_ENABLE', True),
+                    "AwbEnable": controls.get('AWB_ENABLE', True)
                 }
-                CameraHandler._picam2.configure(**camera_config)
 
-                # Set camera controls from config
-                controls = {
-                    "ExposureTime": CameraConfig.PARAMETERS['EXPOSURE'],
-                    "AnalogueGain": CameraConfig.PARAMETERS['GAIN'],
-                    "FrameDurationLimits": (CameraConfig.PARAMETERS['FRAME_DURATION'],
-                                            CameraConfig.PARAMETERS['FRAME_DURATION']),
-                    "FrameRate": CameraConfig.PARAMETERS['FRAME_RATE'],
-                    "HFlip": CameraConfig.CONTROLS['HFLIP'],
-                    "VFlip": CameraConfig.CONTROLS['VFLIP'],
-                    "AeEnable": CameraConfig.CONTROLS['AE_ENABLE'],
-                    "AwbEnable": CameraConfig.CONTROLS['AWB_ENABLE']
-                }
+                # Set focus mode if specified
+                if controls.get('FOCUS_MODE', '').lower() == "continuous":
+                    control_settings["AfMode"] = libcamera.controls.AfModeEnum.Continuous
 
-                # Set focus mode
-                if CameraConfig.CONTROLS['FOCUS_MODE'].lower() == "continuous":
-                    controls["AfMode"] = libcamera.controls.AfModeEnum.Continuous
-
-                CameraHandler._picam2.set_controls(controls)
-                CameraHandler._picam2.start()
-                CameraHandler._camera_initialized = True
-                CameraHandler._initialization_error = None
+                self._picam2.set_controls(control_settings)
+                self._picam2.start()
 
         except Exception as e:
-            CameraHandler._initialization_error = str(e)
+            self._initialization_error = str(e)
             self.logger.log_error_with_traceback("Camera Initialization Error", e)
             raise
+
+    def __load_config(self):
+        """Load configuration settings for camera."""
+        # Load resolution settings with defaults
+        resolution = CAMERA_CONFIG.get('RESOLUTION', {})
+        self.capture_width = resolution.get('WIDTH', 1920)
+        self.capture_height = resolution.get('HEIGHT', 1080)
+
+        # Load image settings with defaults
+        image_config = CAMERA_CONFIG.get('IMAGE', {})
+        self.quality = image_config.get('QUALITY', 90)
+        self.save_dir = image_config.get('SAVE_DIRECTORY', '/tmp/AIAssistant/')
+        self.saved_image_name = image_config.get('FILENAME', 'captured_image.jpg')
+
+        # Create save directory if it doesn't exist
+        os.makedirs(self.save_dir, exist_ok=True)
+        self.image_save_path = os.path.join(self.save_dir, self.saved_image_name)

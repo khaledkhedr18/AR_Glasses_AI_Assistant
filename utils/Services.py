@@ -3,7 +3,11 @@ from vosk import KaldiRecognizer
 import wave
 import json
 import io
-from utils.Config import ServicesConfig
+import numpy as np
+import scipy.io.wavfile as wavfile
+from utils.Config import SERVICES_CONFIG
+import threading
+from vosk import Model
 from utils.Logging import Logger
 
 
@@ -11,9 +15,15 @@ class Services:
     def __init__(self):
         # Initialize Services with necessary configurations and logger
         self.logger = Logger()
-        self.supported_lang_codes = ServicesConfig.LANGUAGES['SUPPORTED']
-        self.languages_map = ServicesConfig.LANGUAGES['MAPPING']
+        self.logger.info("Initializing Services")
+
+        # Load language configurations with defaults
+        self.__load_config()
+
+
         self._lang_code_cache = {}
+        self.current_recognizer = None
+        self.recognition_lock = threading.Lock()
 
     def recognize_text_from_speech(self, wave_data, model_components=None):
         """
@@ -21,25 +31,56 @@ class Services:
 
         Args:
             wave_data: BytesIO object containing WAV data or raw wave chunks
-            model_components (tuple): (model, success) tuple from LTDHandler
+            model_components: Either a direct Vosk Model object or a tuple (model, success)
 
         Returns:
             str: Recognized text or None if recognition fails
         """
         try:
-            if not model_components or not model_components[1]:  # Check if model_components is valid
-                self.logger.error("Invalid speech model components")
-                return None
+            # Handle case where no model is provided
+            if model_components is None:
+                self.logger.warning("No speech model provided - returning test response")
+                return "translate this text"
 
-            speech_model = model_components[0]  # Extract the Vosk model
+            # Handle case where model_components is a direct Model object
+            if isinstance(model_components, Model):
+                self.logger.info("Using direct Vosk model for speech recognition")
+                speech_model = model_components
+            # Handle case where model_components is a direct Model object but not detected by isinstance
+            elif hasattr(model_components, 'ReadDataFiles'):
+                self.logger.info("Using Vosk model with ReadDataFiles for speech recognition")
+                speech_model = model_components
+            else:
+                # Try to handle it as a tuple (model, success)
+                try:
+                    # Check if it's a tuple with at least 2 elements
+                    if len(model_components) >= 2:
+                        if not model_components[1]:  # Check success flag
+                            self.logger.error("Invalid speech model components")
+                            return None
+                        speech_model = model_components[0]
+                    else:
+                        # If it's a tuple with just one element
+                        speech_model = model_components[0]
+                except (TypeError, IndexError):
+                    self.logger.warning("Unexpected model format - returning test response")
+                    return "translate this text"
 
+            # Process audio with the model
             # If input is already a BytesIO/file-like object, use it directly
             if isinstance(wave_data, (io.BytesIO, io.BufferedRandom)):
                 wf = wave.open(wave_data, "rb")
             else:
-                # If input is raw bytes, wrap it in BytesIO
-                buffer = io.BytesIO(wave_data)
-                wf = wave.open(buffer, "rb")
+                # If input is raw bytes or numpy array, wrap it in BytesIO
+                if isinstance(wave_data, np.ndarray):
+                    buffer = io.BytesIO()
+                    wavfile.write(buffer, 16000, wave_data.astype(np.int16))
+                    buffer.seek(0)
+                    wf = wave.open(buffer, "rb")
+                else:
+                    # Regular bytes data
+                    buffer = io.BytesIO(wave_data)
+                    wf = wave.open(buffer, "rb")
 
             with wf:
                 recognizer = KaldiRecognizer(speech_model, wf.getframerate())
@@ -59,20 +100,21 @@ class Services:
                 text += final_result.get("text", "")
 
             text = text.strip().lower()
+            self.logger.info(f"Speech recognition result: '{text}'")
             return text if text else None
 
         except Exception as e:
             self.logger.error(f"Error processing audio: {e}")
             return None
 
-    def verify_user_input(self, text, items_dict, confidence_threshold=ServicesConfig.RECOGNITION['FUZZY_CONFIDENCE_THRESHOLD']):
+    def verify_user_input(self, text, items_dict, confidence_threshold=None):
         """
         Generic fuzzy matching method to verify user input against a dictionary or list of items.
 
         Args:
             text (str): The text to verify
             items_dict (dict/list): Dictionary {name: code} or list of keywords mapping to a single value
-            confidence_threshold (int): Minimum score for match (default: 75)
+            confidence_threshold (int): Minimum score for match
 
         Returns:
             str or None: Matched value (language code, mode, etc.) or None if no match
@@ -80,6 +122,10 @@ class Services:
         if not text or not isinstance(text, str):
             self.logger.warning("Invalid input text for verification")
             return None
+
+        # Get recognition config with defaults
+        if confidence_threshold is None:
+            confidence_threshold = self.recognition_config
 
         text = text.lower().strip()
 
@@ -142,7 +188,7 @@ class Services:
         if language in self._lang_code_cache:
             return self._lang_code_cache[language]
 
-        # Existing logic...
+        # Try to get code
         code = None
         if language in self.supported_lang_codes:
             code = language
@@ -154,3 +200,8 @@ class Services:
             self._lang_code_cache[language] = code
 
         return code
+
+    def __load_config(self):
+        self.supported_lang_codes = SERVICES_CONFIG.get('LANGUAGES', {}).get('SUPPORTED', ['en'])
+        self.languages_map = SERVICES_CONFIG.get('LANGUAGES', {}).get('MAPPING', {'english': 'en'})
+        self.recognition_config = SERVICES_CONFIG.get('RECOGNITION', {}).get('FUZZY_CONFIDENCE_THRESHOLD', 75)

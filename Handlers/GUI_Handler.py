@@ -1,5 +1,6 @@
 import os
 import importlib.util
+from .Qt_Handler import QtHandler
 
 class GUIHandler:
     """
@@ -23,7 +24,7 @@ class GUIHandler:
         # Load the appropriate GUI handler
         self._load_gui_handler()
 
-    def create_overlay_widget(self, config):
+    def create_overlay_widget(self,widget_type, config):
         """
         Create an overlay widget using the provided configuration
 
@@ -39,6 +40,21 @@ class GUIHandler:
 
         if self.gui_handler:
             return self.gui_handler.create_overlay_widget(config['type'], config)
+        return None
+
+    def create_overlay_widgets(self):
+        """
+        Create an overlay widget using the provided configuration
+
+        Args:
+            config (dict): Configuration for the widget including 'type'
+
+        Returns:
+            The created widget instance
+        """
+
+        if self.gui_handler:
+            return self.gui_handler.create_overlay_widgets()
         return None
 
     def hide_widget(self, widget_instance):
@@ -219,10 +235,13 @@ class GUIHandler:
 
     def update_camera_frame(self, frame):
         """
-        Update the camera frame in the GUI
+        Update the camera display with a raw frame
 
         Args:
-            frame: The camera frame to display
+            frame: Raw camera frame data (numpy array)
+
+        Returns:
+            bool: True if successful, False otherwise
         """
         if self.gui_handler:
             return self.gui_handler.update_camera_frame(frame)
@@ -243,52 +262,21 @@ class GUIHandler:
         return False
 
     def _load_gui_handler(self):
-        """Load the appropriate GUI handler based on the selected type"""
-        # Get the current directory
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        """Load the Qt GUI handler directly without fallbacks"""
+        from utils.Logging import Logger
+        # Initialize logger if needed
+        logger = Logger()
 
-        if self.gui_type == "qt":
-            # Load Qt handler
-            module_path = os.path.join(base_dir, "QT_Handler", "Qt_Handler.py")
-            if os.path.exists(module_path):
-                spec = importlib.util.spec_from_file_location("Qt_Handler", module_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+        try:
+            # Direct import since the file is in the same directory
+            logger.info("Importing Qt Handler directly")
 
-                # Create the Qt handler
-                self.gui_handler = module.Qt_Handler()
-                print("Qt GUI handler loaded successfully")
-            else:
-                print(f"Error: Qt handler module not found at {module_path}")
-                self._fallback_to_tkinter()
-
-        elif self.gui_type == "tkinter":
-            # Load Tkinter handler
-            module_path = os.path.join(base_dir, "Tkinter_Handler", "Tkinter_Handler.py")
-            if os.path.exists(module_path):
-                spec = importlib.util.spec_from_file_location("Tkinter_Handler", module_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                # Create the Tkinter handler
-                self.gui_handler = module.Tkinter_Handler()
-                print("Tkinter GUI handler loaded successfully")
-            else:
-                print(f"Error: Tkinter handler module not found at {module_path}")
-                self._fallback_to_qt()
-
-        else:
-            print(f"Unsupported GUI type: {self.gui_type}")
-            self._fallback_to_qt()
-
-    def _fallback_to_qt(self):
-        """Try to load Qt as a fallback"""
-        print("Falling back to Qt GUI")
-        self.gui_type = "qt"
-        self._load_gui_handler()
-
-    def _fallback_to_tkinter(self):
-        """Try to load Tkinter as a fallback if Qt fails"""
-        print("Falling back to Tkinter GUI")
-        self.gui_type = "tkinter"
-        self._load_gui_handler()
+            # Create the Qt handler
+            self.gui_handler = QtHandler()
+            logger.info("Qt GUI handler loaded successfully")
+        except ImportError as e:
+            logger.error(f"Error importing Qt Handler: {e}")
+            raise ImportError(f"Failed to import Qt_Handler: {e}")
+        except Exception as e:
+            logger.error(f"Critical error loading GUI handler: {e}")
+            raise
