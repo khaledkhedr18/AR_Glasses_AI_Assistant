@@ -1,7 +1,8 @@
 import gc
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import numpy as np
 from transformers import pipeline
 from vosk import Model
@@ -18,44 +19,23 @@ class LLMManager:
     Central manager for all language model operations.
     Handles translation and extraction of text from images and speech.
     """
-
     class __ModelLoader:
         """Private model loader handler for managing ML models.
-        Allows multiple instances but loads models only once."""
+        Integrated simple model loading approach"""
 
         # Class-level variables for shared resources
-        __models_load_lock = threading.Lock()  # Lock for model loading
-        __models_loaded = False  # Flag to track if models are loaded
-
-        # Shared model storage across all instances
-        __speech_models = {}  # Stores speech recognition models
+        __models_load_lock = threading.Lock()
+        __vosk_models = {}  # Stores speech recognition models
         __translation_pipelines = {}  # Stores translation pipelines
 
-        # Class-level event for tracking loading completion
-        __loading_complete = threading.Event()
-
         def __init__(self):
-            """Initialize handler instance with shared resources"""
-            # Initialize instance-specific attributes
+            """Initialize handler instance"""
             self.service = Services()
             self.logger = Logger()
             self.logger.info("Initializing Model Loader Handler")
 
             # Core configuration initialization
             self.__load_config()
-
-            # Load models only for first instance
-            with self.__models_load_lock:
-                if not self.__models_loaded:
-                    try:
-                        self.__load_models()
-                        self.__class__.__models_loaded = True
-                        self.__loading_complete.set()
-                        self.logger.info("Initial model loading completed successfully")
-                    except Exception as e:
-                        self.logger.error(f"Model loading failed: {str(e)}")
-                        self.__loading_complete.clear()
-                        raise
 
         def __load_config(self):
             """Load configuration settings for models"""
@@ -65,15 +45,81 @@ class LLMManager:
             # Initialize configuration attributes with default values and expand paths
             self.models_cache_dir = os.path.expanduser(translation_config.get('MODELS_CACHE_DIR', './models/cache'))
             self.models_dir = os.path.expanduser(translation_config.get('TRANSLATION_MODELS_DIR', './models/translation'))
-            self.models_load_timeout = translation_config.get('MODELS_LOAD_TIMEOUT', 30)
+            self.models_load_timeout = translation_config.get('MODELS_LOAD_TIMEOUT', 60)
             self.supported_translation_pairs = translation_config.get('SUPPORTED_TRANSLATION_PAIRS', [])
             self.supported_speech_models = translation_config.get('SUPPORTED_SPEECH_MODELS', [])
 
             # Expand the tilde in the path
             self.recognizer_model_path = os.path.expanduser(recognition_config.get('VOSK_MODEL_DIR', './models/vosk'))
 
+        def get_vosk_model(self, language_code: str):
+            """
+            Get the Vosk model for the given language
+            Loads it if not already loaded
+            """
+            with self.__models_load_lock:
+                if language_code not in self.__vosk_models:
+                    try:
+                        if language_code == "ar":
+                            model_path = "models/vosk/vosk-model-ar-mgb2-0.4"
+                        elif language_code == "en":
+                            model_path = "models/vosk/vosk-model-small-en-us-0.15"
+                        elif language_code == "fr":
+                            model_path = "models/vosk/vosk-model-small-fr-0.22"
+                        else:
+                            raise ValueError(f"Unsupported Language Code: {language_code}")
+
+                        # Use absolute path
+                        model_path = os.path.abspath(model_path)
+                        if not os.path.exists(model_path):
+                            raise FileNotFoundError(f"Model not found at: {model_path}")
+
+                        self.logger.info(f"Loading VOSK model for {language_code} from {model_path}")
+
+                        self.__vosk_models[language_code] = Model(model_path)
+
+                        self.logger.info(f"VOSK model for {language_code} loaded successfully")
+
+                    except Exception as e:
+                        self.logger.error(f"Failed to load VOSK model for {language_code}: {str(e)}")
+                        raise
+
+                return self.__vosk_models[language_code]
+
+        def get_translation_pipeline(self, source: str, target: str):
+            """
+            Get the translation pipeline for source to target.
+            Loads it if not already loaded
+            """
+            with self.__models_load_lock:
+                key = f"{source}-{target}"
+                if key not in self.__translation_pipelines:
+                    try:
+                        model_name = f'Helsinki-NLP/opus-mt-{source}-{target}'
+
+                        self.logger.info(f"Loading translation model: {model_name}")
+
+                        # Use cache directory for models
+                        cache_dir = os.path.abspath('./models/translation/cache')
+                        os.makedirs(cache_dir, exist_ok=True)
+
+                        self.__translation_pipelines[key] = pipeline(
+                            "translation",
+                            model=model_name,
+                            model_kwargs={"cache_dir": cache_dir},
+                            device=-1  # Force CPU usage
+                        )
+
+                        self.logger.info(f"Translation model {key} loaded successfully")
+
+                    except Exception as e:
+                        self.logger.error(f"Failed to load translation model {key}: {str(e)}")
+                        raise
+
+                return self.__translation_pipelines[key]
+
         def get_translation_model(self, source_lang: str, target_lang: str) -> tuple:
-            """Get translation pipeline from shared storage
+            """Get translation pipeline using integrated model loader
 
             Args:
                 source_lang: Source language code
@@ -82,17 +128,16 @@ class LLMManager:
             Returns:
                 tuple: (pipeline, tokenizer, success_flag)
             """
-            if not self.__loading_complete.wait(timeout=self.models_load_timeout):
-                self.logger.error("Model loading timeout exceeded")
-                return None, None, False
-
-            model_key = f"{source_lang}-{target_lang}"
-            translation_pipeline = self.__translation_pipelines.get(model_key)
-
-            return (translation_pipeline, None, True) if translation_pipeline else (None, None, False)
+            try:
+                self.logger.info(f"Loading translation model on demand: {source_lang}-{target_lang}")
+                pipeline_obj = self.get_translation_pipeline(source_lang, target_lang)
+                return (pipeline_obj, None, True)
+            except Exception as e:
+                self.logger.error(f"Failed to load translation model {source_lang}-{target_lang}: {str(e)}")
+                return (None, None, False)
 
         def get_speech_model(self, language: str) -> tuple:
-            """Get speech model from shared storage
+            """Get speech model using integrated model loader
 
             Args:
                 language: Language code
@@ -100,170 +145,30 @@ class LLMManager:
             Returns:
                 tuple: (model, success_flag)
             """
-            if not self.__loading_complete.wait(timeout=self.models_load_timeout):
-                self.logger.error("Model loading timeout exceeded")
-                return None, False
-
-            model = self.__speech_models.get(language)
-            return (model, True) if model else (None, False)
-
-        def __load_models(self):
-            """Initialize and load models into shared storage"""
             try:
-                gc.collect()  # Clean memory before loading
-                self.__ensure_model_directories()
-                self.__preload_all_models()
-
+                self.logger.info(f"Loading speech model on demand: {language}")
+                model = self.get_vosk_model(language)
+                return (model, True)
             except Exception as e:
-                self.logger.error(f"Model loading failed: {str(e)}")
-                raise
-
-        def __ensure_model_directories(self):
-            """Create and verify required model directories"""
-            directories = [
-                self.recognizer_model_path,
-                self.models_dir,
-                self.models_cache_dir
-            ]
-
-            for directory in directories:
-                try:
-                    os.makedirs(directory, exist_ok=True)
-                    if not os.access(directory, os.W_OK):
-                        raise PermissionError(f"Cannot write to {directory}")
-                except Exception as e:
-                    self.logger.error(f"Directory creation failed: {str(e)}")
-                    raise
-
-        def __preload_all_models(self):
-            """Load models using thread pool with resource management"""
-            self.logger.info("Starting model loading process")
-            loading_tasks = []
-
-            try:
-                with ThreadPoolExecutor(max_workers=ML_CONFIG.get('MAX_WORKERS', 2)) as executor:
-                    # Load speech recognition model
-                    speech_model_path = os.path.join(
-                        SERVICES_CONFIG.get('RECOGNITION', {}).get('VOSK_MODEL_DIR', ''),
-                        SERVICES_CONFIG.get('RECOGNITION', {}).get('VOSK_MODELS', {}).get('en', '')
-                    )
-                    loading_tasks.append(
-                        executor.submit(self.__load_speech_model, 'en', speech_model_path)
-                    )
-
-                    # Load translation models
-                    for src_lang, tgt_lang in self.supported_translation_pairs:
-                        loading_tasks.append(
-                            executor.submit(self.__load_translation_model, src_lang, tgt_lang)
-                        )
-                        gc.collect()  # Clean memory after each model load
-
-                    # Wait for all loading tasks to complete
-                    for future in as_completed(loading_tasks):
-                        try:
-                            future.result()
-                        except Exception as e:
-                            self.logger.error(f"Model loading task failed: {str(e)}")
-                            raise
-
-            except Exception as e:
-                self.logger.error(f"Model loading process failed: {str(e)}")
-                raise
-
-        def __load_speech_model(self, language: str, model_path: str):
-            """Load speech recognition model into shared storage
-
-            Args:
-                language: Language code
-                model_path: Path to model files
-            """
-            try:
-                if language in self.__speech_models:
-                    self.logger.info(f"Speech model already loaded for: {language}")
-                    return
-
-                if not os.path.exists(model_path):
-                    raise FileNotFoundError(f"Speech model not found: {model_path}")
-
-                model = Model(model_path)
-                with self.__models_load_lock:
-                    self.__speech_models[language] = model
-                    self.logger.info(f"Speech model loaded: {language}")
-
-            except Exception as e:
-                self.logger.error(f"Speech model loading failed: {str(e)}")
-                raise
-
-        def __load_translation_model(self, src_lang: str, tgt_lang: str):
-            """Load translation model into shared storage
-
-            Args:
-                src_lang: Source language code
-                tgt_lang: Target language code
-            """
-            try:
-                model_key = f"{src_lang}-{tgt_lang}"
-
-                if model_key in self.__translation_pipelines:
-                    self.logger.info(f"Translation pipeline already loaded for: {model_key}")
-                    return
-
-                model_name = ML_CONFIG.get('TRANSLATION', {}).get('MODEL_NAMES', {}).get(model_key)
-                if not model_name:
-                    raise ValueError(f"No model name found for language pair: {model_key}")
-
-                # Set low_cpu_mem_usage to False to avoid requiring accelerate library
-                use_low_memory = ML_CONFIG.get('TRANSLATION', {}).get('USE_LOW_MEMORY', True)
-
-                # Check if accelerate is available
-                try:
-                    import accelerate
-                    have_accelerate = True
-                except ImportError:
-                    have_accelerate = False
-                    use_low_memory = False
-                    self.logger.warning("Accelerate library not found, disabling low_cpu_mem_usage")
-
-                translation_pipeline = pipeline(
-                    "translation",
-                    model=model_name,
-                    model_kwargs={
-                        "cache_dir": self.models_cache_dir,
-                        "low_cpu_mem_usage": use_low_memory and have_accelerate
-                    }
-                )
-
-                with self.__models_load_lock:
-                    self.__translation_pipelines[model_key] = translation_pipeline
-                    self.logger.info(f"Translation pipeline loaded: {model_key}")
-
-            except Exception as e:
-                self.logger.error(f"Translation pipeline loading failed: {str(e)}")
-                raise
+                self.logger.error(f"Failed to load speech model {language}: {str(e)}")
+                return (None, False)
 
         def cleanup(self):
             """Clean up resources and models from shared storage"""
             with self.__models_load_lock:
                 try:
                     # Clean speech models
-                    for model in self.__speech_models.values():
+                    for model in self.__vosk_models.values():
                         if hasattr(model, '__del__'):
                             model.__del__()
-                    self.__speech_models.clear()
+                    self.__vosk_models.clear()
 
                     # Clean translation pipelines
                     self.__translation_pipelines.clear()
 
-                    # Reset loading state
-                    self.__class__.__models_loaded = False
-                    self.__loading_complete.clear()
-
-                    # Force garbage collection
-                    gc.collect()
-                    self.logger.info("All models unloaded and memory cleaned")
-
+                    self.logger.info("All models cleaned up successfully")
                 except Exception as e:
-                    self.logger.error(f"Cleanup failed: {str(e)}")
+                    self.logger.error(f"Error during cleanup: {str(e)}")
                     raise
 
     def __init__(self):

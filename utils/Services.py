@@ -38,71 +38,80 @@ class Services:
             # Better model type detection
             from vosk import Model as VoskModel
 
-            # Handle case where model_components is a direct Model object
+            # Determine the speech model to use
             if isinstance(model_components, VoskModel):
-                self.logger.info("Using direct Vosk model for speech recognition")
                 speech_model = model_components
-            # Handle case where model_components is a direct Model object but not detected by isinstance
             elif hasattr(model_components, 'ReadDataFiles'):
-                self.logger.info("Using Vosk model with ReadDataFiles for speech recognition")
                 speech_model = model_components
             else:
-                # Try to handle it as a tuple (model, success)
                 try:
-                    # Check if it's a tuple with at least 2 elements
-                    if len(model_components) >= 2:
-                        if not model_components[1]:  # Check success flag
-                            self.logger.error("Invalid speech model components")
-                            return None
+                    # Try to unpack tuple (model, success)
+                    if isinstance(model_components, tuple) and len(model_components) >= 1:
                         speech_model = model_components[0]
                     else:
-                        # If it's a tuple with just one element
-                        speech_model = model_components[0]
-                except (TypeError, IndexError):
-                    self.logger.warning("Unexpected model format - returning test response")
-                    return "translate this text"
+                        self.logger.error("Invalid model format")
+                        return None
+                except Exception as e:
+                    self.logger.error(f"Error determining model type: {e}")
+                    return None
 
             # Process audio with the model
-            # If input is already a BytesIO/file-like object, use it directly
-            if isinstance(wave_data, (io.BytesIO, io.BufferedRandom)):
-                wf = wave.open(wave_data, "rb")
+            import numpy as np
+            import io
+            import wave
+
+            # Convert wave_data to proper format
+            if isinstance(wave_data, np.ndarray):
+                # Handle numpy array
+                import scipy.io.wavfile as wavfile
+                buffer = io.BytesIO()
+                wavfile.write(buffer, 16000, wave_data.astype(np.int16))
+                buffer.seek(0)
+
+                with wave.open(buffer, "rb") as wf:
+                    self._process_wave_file(wf, speech_model)
+            elif isinstance(wave_data, (bytes, bytearray)):
+                # Handle raw bytes
+                buffer = io.BytesIO(wave_data)
+                with wave.open(buffer, "rb") as wf:
+                    return self._process_wave_file(wf, speech_model)
+            elif isinstance(wave_data, (io.BytesIO, io.BufferedRandom)):
+                # Handle file-like object
+                with wave.open(wave_data, "rb") as wf:
+                    return self._process_wave_file(wf, speech_model)
             else:
-                # If input is raw bytes or numpy array, wrap it in BytesIO
-                import numpy as np
-                if isinstance(wave_data, np.ndarray):
-                    import scipy.io.wavfile as wavfile
-                    buffer = io.BytesIO()
-                    wavfile.write(buffer, 16000, wave_data.astype(np.int16))
-                    buffer.seek(0)
-                    wf = wave.open(buffer, "rb")
-                else:
-                    # Regular bytes data
-                    buffer = io.BytesIO(wave_data)
-                    wf = wave.open(buffer, "rb")
+                self.logger.error(f"Unsupported audio data type: {type(wave_data)}")
+                return None
 
-            with wf:
-                recognizer = KaldiRecognizer(speech_model, wf.getframerate())
-                text = ""
+        except Exception as e:
+            self.logger.error(f"Error processing audio: {e}")
+            return None
 
-                # Process audio in chunks
-                while True:
-                    data = wf.readframes(4000)
-                    if len(data) == 0:
-                        break
-                    if recognizer.AcceptWaveform(data):
-                        result = json.loads(recognizer.Result())
-                        text += result.get("text", "") + " "
+    def _process_wave_file(self, wf, speech_model):
+        """Helper method to process a wave file with a speech model"""
+        try:
+            recognizer = KaldiRecognizer(speech_model, wf.getframerate())
+            text = ""
 
-                # Get final recognition result
-                final_result = json.loads(recognizer.FinalResult())
-                text += final_result.get("text", "")
+            # Process audio in chunks
+            while True:
+                data = wf.readframes(4000)
+                if len(data) == 0:
+                    break
+                if recognizer.AcceptWaveform(data):
+                    result = json.loads(recognizer.Result())
+                    text += result.get("text", "") + " "
+
+            # Get final recognition result
+            final_result = json.loads(recognizer.FinalResult())
+            text += final_result.get("text", "")
 
             text = text.strip().lower()
             self.logger.info(f"Speech recognition result: '{text}'")
             return text if text else None
 
         except Exception as e:
-            self.logger.error(f"Error processing audio: {e}")
+            self.logger.error(f"Error processing wave file: {e}")
             return None
 
     def verify_user_input(self, text, items_dict, confidence_threshold=None):

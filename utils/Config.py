@@ -171,17 +171,15 @@ ML_CONFIG = {
             'fr-en': 'Helsinki-NLP/opus-mt-fr-en',  # French to English
             'ar-en': 'Helsinki-NLP/opus-mt-ar-en',  # Arabic to English
         },
-        'MODELS_LOAD_TIMEOUT': 30,
+        'MODELS_LOAD_TIMEOUT': 60,  # Increased timeout for Pi
         'MODELS_CACHE_DIR': './models/translation/cache',
         'SUPPORTED_SPEECH_MODELS': ['en'],
+        # Only load one translation pair by default to reduce startup time
         'SUPPORTED_TRANSLATION_PAIRS': [
-            ('en', 'ar'),  # English to Arabic
-            ('fr', 'en'),  # French to English
-            ('ar', 'en')   # Arabic to English
+            ('en', 'ar'),  # English to Arabic - most commonly used
         ],
-        'MAX_WORKERS': 2,
-        'USE_LOW_MEMORY': False,
-
+        'MAX_WORKERS': 1,  # Reduced for Pi to prevent resource conflicts
+        'USE_LOW_MEMORY': False,  # Disabled by default for Pi compatibility
     }
 }
 
@@ -197,7 +195,7 @@ SERVICES_CONFIG = {
     },
 
     'RECOGNITION': {
-        'VOSK_MODEL_DIR': '../models/vosk',
+        'VOSK_MODEL_DIR': 'models/vosk',
         'VOSK_MODELS': {
             'en': 'vosk-model-small-en-us-0.15'
         },

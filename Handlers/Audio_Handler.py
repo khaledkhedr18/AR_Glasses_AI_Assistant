@@ -4,9 +4,12 @@ import numpy as np
 import threading
 import os
 import scipy.io.wavfile as wavfile
+import json
+import time
 from datetime import datetime
 from utils.Logging import Logger
 from utils.WorkerThread import create_worker
+from vosk import KaldiRecognizer
 
 class AudioHandler:
     """
@@ -27,11 +30,86 @@ class AudioHandler:
         self.audio_chunks = []
         self.recording_thread = None
         self.stop_recording_event = None
+        self.recording_mode = "offline"
         self.audio_save_dir = os.path.join(os.path.expanduser('~'), 'ar_glasses_audio')
 
         # Create audio save directory if it doesn't exist
         if not os.path.exists(self.audio_save_dir):
             os.makedirs(self.audio_save_dir)
+
+    def record_and_recognize(self, model, max_duration=10):
+        """
+        Records audio and performs real-time speech recognition using VOSK model.
+
+        Args:
+            model: The Vosk model to use for recognition
+            max_duration (int): Maximum recording duration in seconds
+
+        Returns:
+            str: The recognized text, or None if no text was recognized
+        """
+        with self.audio_lock:
+            if self.listening:
+                self.logger.warning("Recording already in progress")
+                return None
+
+            self.listening = True
+            self.logger.info(f"Starting real-time speech recognition (max {max_duration}s)...")
+
+            # Initialize recognizer with the speech model
+            recognizer = KaldiRecognizer(model, self.sample_rate)
+            recognized_text = ""
+            stop_event = threading.Event()
+
+            def audio_callback(indata, frames, time_info, status):
+                if status:
+                    self.logger.warning(f"Audio input error: {status}")
+
+                # Process audio in real-time with VOSK
+                if recognizer.AcceptWaveform(indata.tobytes()):
+                    result = json.loads(recognizer.Result())
+                    text = result.get("text", "")
+                    if text:
+                        nonlocal recognized_text
+                        recognized_text += text + " "
+                        self.logger.debug(f"Partial recognition: {text}")
+
+            try:
+                start_time = time.time()
+
+                # Start streaming with callback
+                with sd.InputStream(
+                    callback=audio_callback,
+                    channels=self.channels,
+                    samplerate=self.sample_rate,
+                    dtype=np.int16,
+                    blocksize=4000
+                ):
+                    # Continue until timeout or external stop
+                    while not stop_event.is_set() and (time.time() - start_time) < max_duration:
+                        sd.sleep(100)  # Sleep to reduce CPU usage
+
+                # Get final result from recognizer
+                final_result = json.loads(recognizer.FinalResult())
+                final_text = final_result.get("text", "")
+                if final_text:
+                    recognized_text += final_text
+
+                recognized_text = recognized_text.strip()
+
+                if recognized_text:
+                    self.logger.info(f"Recognized text: '{recognized_text}'")
+                    return recognized_text
+                else:
+                    self.logger.info("No speech recognized")
+                    return None
+
+            except Exception as e:
+                self.logger.error(f"Error during speech recognition: {e}")
+                return None
+            finally:
+                self.listening = False
+                recognizer = None  # Help garbage collection
 
     def start_recording(self, mode="offline"):
         """
@@ -45,7 +123,7 @@ class AudioHandler:
         """
         with self.audio_lock:
             if self.listening:
-                self.logger.warning("Recording already in progress")
+                self.logger.warning("Recording already in progress - skipping start")
                 return False
 
             self.logger.info(f"Starting audio recording in {mode} mode")
@@ -75,7 +153,7 @@ class AudioHandler:
         """
         with self.audio_lock:
             if not self.listening:
-                self.logger.warning("No recording in progress")
+                self.logger.warning("No recording in progress - skipping stop")
                 return None
 
             self.logger.info("Stopping audio recording")
@@ -90,6 +168,7 @@ class AudioHandler:
             # Process the recorded audio
             if not self.audio_chunks:
                 self.logger.warning("No audio data recorded")
+                self.listening = False  # Ensure we reset state even if no data
                 return None
 
             try:
@@ -101,14 +180,16 @@ class AudioHandler:
                     # Save to file for online mode
                     file_path = self._save_audio_to_file(audio_data)
                     self.logger.info(f"Audio saved to: {file_path}")
-                    return file_path
+                    result = file_path
                 else:
                     # Return raw data for offline mode
                     self.logger.info(f"Returning raw audio data ({len(audio_data)} samples)")
-                    return audio_data
+                    result = audio_data
+
+                return result
 
             except Exception as e:
-                self.logger.error(f"Error processing recorded audio: {e}")
+                self.logger.error(f"Error processing recorded audio: {str(e)}")
                 return None
             finally:
                 # Reset recording state
@@ -158,7 +239,6 @@ class AudioHandler:
         """Check if the handler is currently recording audio."""
         return self.listening
 
-    # Keep existing methods for speech output
     def output_speech(self, text, on_finished=None):
         """
         Convert text to speech and play it through the system's audio output.
@@ -171,11 +251,17 @@ class AudioHandler:
             WorkerThread: The worker thread handling the TTS
         """
         def speak_task():
-            clean_text = " ".join(str(text).splitlines()).strip()
-            clean_text = clean_text.replace('"', '').replace("'", "")
-            subprocess.run(["flite", "-t", clean_text, "-o", "/dev/stdout"],
-                          stdout=subprocess.PIPE)
-            return True
+            try:
+                clean_text = " ".join(str(text).splitlines()).strip()
+                clean_text = clean_text.replace('"', '').replace("'", "")
+
+                # Direct output to default audio device instead of stdout
+                self.logger.info(f"Speaking: {clean_text[:50]}...")
+                subprocess.run(["flite", "-t", clean_text], check=True)
+                return True
+            except Exception as e:
+                self.logger.error(f"Speech output error: {str(e)}")
+                return False
 
         worker = create_worker(
             speak_task,
@@ -251,7 +337,6 @@ class AudioHandler:
             self.logger.error(f"Error during audio recording: {e}")
         finally:
             self.listening = False
-
 
     def _save_audio_to_file(self, audio_data):
         """

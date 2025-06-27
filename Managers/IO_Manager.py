@@ -69,24 +69,35 @@ class IOManager:
                 self.logger.info("Camera stream already stopped")
 
     def get_image(self):
+        """Capture and return an image from the camera"""
         with self.camera_lock:
-            if self.camera_running:
-                self.logger.warning("Camera not running, cannot capture image")
-                return self.camera.capture_and_save_image()
-            self.logger.warning("Camera not running, cannot capture image")
-            return None
+            if not self.camera_running:
+                self.logger.warning("Camera not running, starting camera for capture")
+                # Start camera if not already running
+                self.start_camera_stream()
+                time.sleep(0.5)  # Wait for camera to initialize
+
+            self.logger.info("Capturing image from camera...")
+            return self.camera.capture_and_save_image()
 
     def start_audio_listening(self):
+        """Start audio recording if not already running"""
         with self.audio_lock:
-            if not self.audio_running:
-                self.logger.info("Starting audio recording")
-                self.audio.start_recording()
+            if self.audio_running:
+                self.logger.debug("Audio already recording - not starting again")
+                return
+
+            # self.logger.info("Starting audio recording")
+            success = self.audio.start_recording()
+            if success:
                 self.audio_running = True
+            else:
+                self.logger.warning("Failed to start audio recording")
 
     def stop_audio_listening(self):
         with self.audio_lock:
             if self.audio_running:
-                self.logger.info("Stopping audio recording")
+                # self.logger.info("Stopping audio recording")
                 self.recorded_audio = self.audio.stop_recording()
                 self.audio_running = False
 
@@ -103,15 +114,16 @@ class IOManager:
             text (str): Text to be spoken and displayed
             mode (str): Interaction mode - "speech", "display", or "both" (default)
         """
-        with self.interaction_lock:  # Create a dedicated lock for interaction
+        with self.interaction_lock:
             try:
                 if mode in ["speech", "both"]:
+                    self.logger.info(f"Speaking: {text}")
                     self.audio.output_speech(text)
 
                 if mode in ["display", "both"]:
                     self.logger.info(f"AI: {text}")
-                    self.gui.display_text_in_widget(IO_CONFIG.get('INTERFACE', {}).get('WINDOWS', {}).get('AI', ''), text)
-
+                    # Update the AI response widget directly instead of using display_text_in_widget
+                    self.gui.update_ai_response(text)
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in user interaction", e)
 
@@ -441,4 +453,27 @@ class IOManager:
             bool: True if successful, False otherwise
         """
         return self.gui.delete_overlay_widget(widget_instance)
+
+    def get_user_speech(self, max_duration=5):
+        """
+        Record audio and perform real-time speech recognition.
+
+        Args:
+            max_duration (int): Maximum recording duration in seconds
+
+        Returns:
+            str: The recognized text or None if no speech detected
+        """
+        with self.audio_lock:
+            if self.audio_running:
+                self.logger.warning("Audio already recording - cannot start speech recognition")
+                return None
+
+            self.audio_running = True
+            try:
+                # Use the new method for real-time recognition
+                text = self.audio.record_and_recognize(self.speech_model, max_duration)
+                return text
+            finally:
+                self.audio_running = False
 
