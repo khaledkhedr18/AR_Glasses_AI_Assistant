@@ -87,37 +87,26 @@ class LLMManager:
                 return self.__vosk_models[language_code]
 
         def get_translation_pipeline(self, source: str, target: str):
-            """
-            Get the translation pipeline for source to target.
-            Loads it if not already loaded
-            """
-            with self.__models_load_lock:
-                key = f"{source}-{target}"
-                if key not in self.__translation_pipelines:
-                    try:
-                        model_name = f'Helsinki-NLP/opus-mt-{source}-{target}'
+            """Get translation pipeline with optimized settings"""
+            key = f"{source}-{target}"
+            if key not in self.__translation_pipelines:
+                try:
+                    model_name = f'Helsinki-NLP/opus-mt-{source}-{target}'
 
-                        self.logger.info(f"Loading translation model: {model_name}")
-
-                        # Use cache directory for models
-                        cache_dir = os.path.abspath('./models/translation/cache')
-                        os.makedirs(cache_dir, exist_ok=True)
-
-                        self.__translation_pipelines[key] = pipeline(
-                            "translation",
-                            model=model_name,
-                            model_kwargs={"cache_dir": cache_dir},
-                            device=-1  # Force CPU usage
-                        )
-
-                        self.logger.info(f"Translation model {key} loaded successfully")
-
-                    except Exception as e:
-                        self.logger.error(f"Failed to load translation model {key}: {str(e)}")
-                        raise
-
-                return self.__translation_pipelines[key]
-
+                    # Add these critical pipeline parameters
+                    self.__translation_pipelines[key] = pipeline(
+                        "translation",
+                        model=model_name,
+                        device=-1,  # CPU
+                        truncation=True,  # Essential for short texts
+                        max_length=100,  # Prevent long outputs
+                        num_beams=2,  # Balance between speed and quality
+                        early_stopping=True  # Prevent repetition
+                    )
+                except Exception as e:
+                    self.logger.error(f"Pipeline creation failed: {str(e)}")
+                    raise
+            return self.__translation_pipelines[key]
         def get_translation_model(self, source_lang: str, target_lang: str) -> tuple:
             """Get translation pipeline using integrated model loader
 
@@ -188,28 +177,45 @@ class LLMManager:
         self.logger.info("LLM_Manager initialized successfully")
 
     def process_user_inputs(self, user_config, input_data):
-        """Process and translate multimedia input based on user configuration"""
-        self.logger.info(f"Starting translation with mode: {user_config['translation_mode']}")
+        """Process and translate multimedia input with complete error handling"""
+        self.logger.info(f"Starting translation with mode: {user_config.get('translation_mode')}")
 
         try:
+            # Setup translation environment
             models_setup = self.__setup_translation_environment(user_config)
             if not models_setup:
-                return None
+                return {
+                    'success': False,
+                    'error': 'Failed to setup translation environment',
+                    'operation_type': None,
+                    'original_text': '',
+                    'translated_text': ''
+                }
 
+            # Process based on mode
             result = self.__process_input_by_mode(
                 user_config['translation_mode'],
                 input_data,
                 models_setup
             )
 
-            if result:
-                self.logger.info("Translation completed successfully")
+            if not result:
+                result = self.__create_result_template()
+                result['error'] = 'Translation process failed'
+            elif not result.get('success'):
+                result['error'] = result.get('error', 'Unknown translation error')
+
             return result
 
         except Exception as e:
-            self.logger.error(f"Translation failed: {str(e)}")
-            return None
-
+            self.logger.error(f"Translation processing error: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'operation_type': None,
+                'original_text': '',
+                'translated_text': ''
+            }
     def get_speech_model(self, src_language="en"):
         speech_model = self.__model_loader.get_speech_model(src_language)
         return speech_model
@@ -220,51 +226,122 @@ class LLMManager:
 
 
     def __setup_translation_environment(self, user_config):
-        """Setup translation environment and validate models"""
+        """Setup translation environment with robust configuration validation"""
+        required_keys = ['source_lang', 'target_lang', 'translation_mode']
+        if not all(key in user_config for key in required_keys):
+            missing = [key for key in required_keys if key not in user_config]
+            self.logger.error(f"Missing configuration keys: {missing}")
+            return None
+
+        # Validate source language
         src_code = self.service.get_language_code(user_config['source_lang'])
-        dest_code = self.service.get_language_code(user_config['dest_lang'])
-
-        if not src_code or not dest_code:
-            self.logger.error("Invalid language configuration")
+        if not src_code:
+            self.logger.error(f"Invalid source language: {user_config['source_lang']}")
             return None
 
-        translation_model = self.__model_loader.get_translation_model(src_code, dest_code)
-        if not translation_model[2]:  # Check success flag
-            self.logger.error("Failed to load translation model")
+        # Validate target language
+        dest_code = self.service.get_language_code(user_config['target_lang'])
+        if not dest_code:
+            self.logger.error(f"Invalid target language: {user_config['target_lang']}")
             return None
 
+        # Check supported translation pairs
+        supported_pairs = ML_CONFIG.get('TRANSLATION', {}).get('SUPPORTED_TRANSLATION_PAIRS', [])
+        if (src_code, dest_code) not in supported_pairs:
+            self.logger.error(f"Unsupported translation pair: {src_code}-{dest_code}")
+            return None
+
+        # Load translation model
+        translation_result = self.__model_loader.get_translation_model(src_code, dest_code)
+        if not translation_result or len(translation_result) < 3 or not translation_result[2]:
+            self.logger.error(f"Failed to load translation model for {src_code}-{dest_code}")
+            return None
+
+        # Load speech model if needed
         speech_model = None
         if user_config['translation_mode'] in ['speech', 'both']:
-            speech_model = self.__model_loader.get_speech_model(src_code)
-            if not speech_model[1]:  # Check success flag
-                self.logger.error("Failed to load speech model")
+            speech_result = self.__model_loader.get_speech_model(src_code)
+            if not speech_result or len(speech_result) < 2 or not speech_result[1]:
+                self.logger.error(f"Failed to load speech model for {src_code}")
                 return None
-            speech_model = speech_model[0]  # Extract model from tuple
+            speech_model = speech_result[0]
 
-        return src_code, dest_code, translation_model[:2], speech_model
+        return {
+            'source_code': src_code,
+            'target_code': dest_code,
+            'translation_pipeline': translation_result[0],  # The actual pipeline
+            'translation_tokenizer': translation_result[1],  # Tokenizer if available
+            'speech_model': speech_model,
+            'translation_mode': user_config['translation_mode']
+        }
 
     def __process_input_by_mode(self, mode, input_data, models_setup):
-        """Process input based on translation mode"""
         if not models_setup:
             return None
 
-        src_code, _, translation_model, speech_model = models_setup
         try:
             if mode == 'image':
-                return self.__process_image_input(input_data, src_code, translation_model)
+                return self.__process_image_input(
+                    input_data,
+                    models_setup['source_code'],
+                    models_setup['translation_pipeline']
+                )
+            elif mode == 'text':  # New text mode handler
+                return self.__process_text_input(
+                    input_data,
+                    models_setup['translation_pipeline']
+                )
             elif mode == 'speech':
-                return self.__process_speech_input(input_data, speech_model, translation_model)
+                return self.__process_speech_input(
+                    input_data,
+                    models_setup['speech_model'],
+                    models_setup['translation_pipeline']
+                )
             elif mode == 'both':
-                return self.__process_combined_input(input_data, src_code, speech_model, translation_model)
+                return self.__process_combined_input(
+                    input_data,
+                    models_setup['source_code'],
+                    models_setup['speech_model'],
+                    models_setup['translation_pipeline']
+                )
             else:
                 self.logger.error(f"Invalid mode: {mode}")
                 return None
-        except ValueError as ve:
-            self.logger.error(f"Input validation error: {str(ve)}")
-            return None
         except Exception as e:
             self.logger.error(f"Processing error: {str(e)}")
             return None
+
+    def __process_text_input(self, text, translation_model):
+        """Handle direct text translation with proper logging"""
+        result = self.__create_result_template()
+        self.logger.info(f"Starting text translation for: {text}")
+
+        if not text:
+            self.logger.error("No text provided for translation")
+            return result
+
+        try:
+            self.logger.info("Calling translation pipeline...")
+            translated_text = self.translation_handler.translate_text(
+                text,
+                translation_model
+            )
+
+            if translated_text:
+                self.logger.info(f"Translation successful: {translated_text}")
+                result.update({
+                    'success': True,
+                    'operation_type': 'translation',
+                    'original_text': text,
+                    'translated_text': translated_text
+                })
+            else:
+                self.logger.error("Translation returned empty result")
+
+        except Exception as e:
+            self.logger.error(f"Translation process failed: {str(e)}")
+
+        return result
 
     def __process_image_input(self, input_data, src_code, translation_model):
         """Handle image-only translation"""

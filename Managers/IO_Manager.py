@@ -107,7 +107,7 @@ class IOManager:
                 return self.recorded_audio
             return None
 
-    def interact_with_user(self, text, mode="both"):
+    def interact_with_user(self, text, mode="both", wait_for_speech=False):
         """
         Interacts with user through speech and display with thread safety.
         Args:
@@ -118,12 +118,18 @@ class IOManager:
             try:
                 if mode in ["speech", "both"]:
                     self.logger.info(f"Speaking: {text}")
-                    self.audio.output_speech(text)
+
+                    if wait_for_speech:
+                        speech_done = threading.Event()
+                        self.audio.output_speech(text, on_finished=lambda: speech_done.set())
+                        speech_done.wait()
+                    else:
+                        self.audio.output_speech(text)
 
                 if mode in ["display", "both"]:
                     self.logger.info(f"AI: {text}")
-                    # Update the AI response widget directly instead of using display_text_in_widget
                     self.gui.update_ai_response(text)
+
             except Exception as e:
                 self.logger.log_error_with_traceback("Error in user interaction", e)
 
@@ -476,4 +482,12 @@ class IOManager:
                 return text
             finally:
                 self.audio_running = False
+
+    def clear_speech_queue(self):
+        """Clear all pending speech output."""
+        self.audio.clear_queue()
+
+    def is_speech_queued(self):
+        """Check if speech is queued or playing."""
+        return not self.audio.is_queue_empty()
 

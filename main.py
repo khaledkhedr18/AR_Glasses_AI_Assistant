@@ -46,7 +46,8 @@ class ARGlassesAssistant:
             'online_mode': False,
             'use_prompt': False,
             'prompt_text': None,
-            'speech_text': None
+            'speech_text': None,
+            'translation_mode': None
         }
 
         # Store model references
@@ -200,8 +201,9 @@ class ARGlassesAssistant:
     def _start_conversation_flow(self):
         """Start the main conversation flow"""
         try:
+            self.io_manager.clear_speech_queue()
             self.logger.info("Starting conversation flow")
-            # self.io_manager.interact_with_user("How can I assist you today?", mode="both")
+            self.io_manager.interact_with_user("How can I assist you today?", mode="both")
 
             # Reset user configuration
             self._reset_user_config()
@@ -212,6 +214,7 @@ class ARGlassesAssistant:
                 self.io_manager.interact_with_user("Operation selection failed.", mode="both")
                 self._reset_conversation()
                 return
+            self.io_manager.clear_speech_queue()
 
             # Handle the selected operation
             if self.user_config['operation_type'] == 'translate':
@@ -249,6 +252,8 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
+
             self.io_manager.interact_with_user("What would you like to do? Say 'OCR' or 'Translate'", mode="both")
 
             # Use real-time recognition
@@ -258,22 +263,27 @@ class ARGlassesAssistant:
                 self.io_manager.gui.update_user_speech(f"You: {text}")
                 text_lower = text.lower()
 
-                if 'ocr' in text_lower:
+                if 'extract' in text_lower:
+                    self.io_manager.clear_speech_queue()
                     self.user_config['operation_type'] = 'ocr'
                     self.io_manager.interact_with_user("OCR selected", mode="both")
                     return True
                 elif 'translate' in text_lower or 'translation' in text_lower:
+                    self.io_manager.clear_speech_queue()
                     self.user_config['operation_type'] = 'translate'
                     self.io_manager.interact_with_user("Translation selected", mode="both")
                     return True
                 else:
+                    self.io_manager.clear_speech_queue()
                     self.io_manager.interact_with_user("I didn't understand. Please say 'OCR' or 'Translate'", mode="both")
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user("I didn't hear anything. Please say 'OCR' or 'Translate'", mode="both")
 
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Please try again later.", mode="both")
 
         return False
@@ -295,37 +305,36 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("What type of input? Say 'Speech' or 'Image'", mode="both")
 
-            self.io_manager.start_audio_listening()
-            time.sleep(3)
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=5)
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
+                text_lower = text.lower()
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
-                    text_lower = text.lower()
-
-                    if 'speech' in text_lower or 'voice' in text_lower:
-                        self.user_config['input_type'] = 'speech'
-                        self.io_manager.interact_with_user("Speech input selected", mode="both")
-                        return True
-                    elif 'image' in text_lower or 'picture' in text_lower or 'photo' in text_lower:
-                        self.user_config['input_type'] = 'image'
-                        self.io_manager.interact_with_user("Image input selected", mode="both")
-                        return True
-                    else:
-                        self.io_manager.interact_with_user("I didn't understand. Please say 'Speech' or 'Image'", mode="both")
+                if 'speech' in text_lower or 'voice' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['input_type'] = 'speech'
+                    self.io_manager.interact_with_user("Speech input selected", mode="both")
+                    return True
+                elif 'image' in text_lower or 'picture' in text_lower or 'photo' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['input_type'] = 'image'
+                    self.io_manager.interact_with_user("Image input selected", mode="both")
+                    return True
                 else:
-                    self.io_manager.interact_with_user("I didn't hear anything. Please say 'Speech' or 'Image'", mode="both")
+                    self.io_manager.clear_speech_queue()
+                    self.io_manager.interact_with_user("I didn't understand. Please say 'Speech' or 'Image'", mode="both")
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user("I didn't hear anything. Please say 'Speech' or 'Image'", mode="both")
+
 
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Please try again later.", mode="both")
 
         return False
@@ -350,21 +359,38 @@ class ARGlassesAssistant:
             self._handle_offline_image_translation()
 
     def _handle_speech_translation(self):
-        """Handle speech translation workflow"""
+        """Handle speech translation workflow with proper configuration"""
+        # Initialize config with defaults
+        self.user_config.update({
+            'operation_type': 'translate',
+            'input_type': 'speech',
+            'online_mode': False,
+            'use_prompt': False,
+            'translation_mode': 'text'
+        })
+
+
         # Get source language
         if not self._ask_source_language():
-            return
+            return None
 
         # Get target language
         if not self._ask_target_language():
-            return
+            return None
 
-        # Get speech input for translation
+        # Get speech input
         if not self._get_speech_input():
-            return
+            return None
 
-        # Process translation
-        self._process_speech_translation()
+        # Process translation with validated config
+        translation_result = self._process_speech_translation()
+
+        if not translation_result or not translation_result.get('success'):
+            error = translation_result.get('error', 'Translation failed') if translation_result else 'Unknown error'
+            self.io_manager.interact_with_user(f"Translation failed: {error}", mode="both")
+            return None
+
+        return translation_result
 
     def _handle_ocr_flow(self):
         """Handle OCR workflow"""
@@ -394,47 +420,41 @@ class ARGlassesAssistant:
         supported_languages = ", ".join([f"'{lang}'" for lang in lang_mapping.keys()])
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user(
                 f"What is the source language? Say {supported_languages}",
                 mode="both"
             )
 
-            self.io_manager.start_audio_listening()
-            time.sleep(3)
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=5)
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
 
-                    # Get language code using service
-                    lang_code = self.io_manager.service.get_language_code(text)
+                # Get language code using service
+                lang_code = self.io_manager.service.get_language_code(text)
 
-                    if lang_code:
-                        self.user_config['source_lang'] = lang_code
-                        self.io_manager.interact_with_user(f"Source language set to {text}", mode="both")
-                        return True
-                    else:
-                        self.io_manager.interact_with_user(
-                            f"Language not recognized. Please say one of {supported_languages}",
-                            mode="both"
-                        )
+                if lang_code:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['source_lang'] = lang_code
+                    self.io_manager.interact_with_user(f"Source language set to {text}", mode="both")
+                    return True
                 else:
+                    self.io_manager.clear_speech_queue()
                     self.io_manager.interact_with_user(
-                        f"I didn't hear anything. Please say one of {supported_languages}",
+                        f"Language not recognized. Please say one of {supported_languages}",
                         mode="both"
                     )
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user(
                     f"I didn't hear anything. Please say one of {supported_languages}",
                     mode="both"
                 )
-
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Please try again later.", mode="both")
 
         return False
@@ -453,47 +473,41 @@ class ARGlassesAssistant:
         supported_languages = ", ".join([f"'{lang}'" for lang in lang_mapping.keys()])
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user(
                 f"What is the target language? Say {supported_languages}",
                 mode="both"
             )
 
-            self.io_manager.start_audio_listening()
-            time.sleep(3)
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=3)
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
 
-                    # Get language code using service
-                    lang_code = self.io_manager.service.get_language_code(text)
+                # Get language code using service
+                lang_code = self.io_manager.service.get_language_code(text)
 
-                    if lang_code:
-                        self.user_config['target_lang'] = lang_code
-                        self.io_manager.interact_with_user(f"Target language set to {text}", mode="both")
-                        return True
-                    else:
-                        self.io_manager.interact_with_user(
-                            f"Language not recognized. Please say one of {supported_languages}",
-                            mode="both"
-                        )
+                if lang_code:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['target_lang'] = lang_code
+                    self.io_manager.interact_with_user(f"Target language set to {text}", mode="both")
+                    return True
                 else:
+                    self.io_manager.clear_speech_queue()
                     self.io_manager.interact_with_user(
-                        f"I didn't hear anything. Please say one of {supported_languages}",
+                        f"Language not recognized. Please say one of {supported_languages}",
                         mode="both"
                     )
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user(
                     f"I didn't hear anything. Please say one of {supported_languages}",
                     mode="both"
                 )
-
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Please try again later.", mode="both")
 
         return False
@@ -504,38 +518,37 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Do you want to continue in online mode? Say 'Yes' or 'No'", mode="both")
 
-            self.io_manager.start_audio_listening()
-            time.sleep(3)
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=3)
+            if text:
+                self.io_manager.clear_speech_queue()
+                self.io_manager.gui.update_user_speech(f"You: {text}")
+                text_lower = text.lower()
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
-                    text_lower = text.lower()
-
-                    if 'yes' in text_lower or 'yeah' in text_lower:
-                        self.user_config['online_mode'] = True
-                        self.io_manager.interact_with_user("Online mode enabled", mode="both")
-                        # Ask if they want to send a prompt
-                        return self._ask_prompt_option()
-                    elif 'no' in text_lower or 'nope' in text_lower:
-                        self.user_config['online_mode'] = False
-                        self.io_manager.interact_with_user("Offline mode selected", mode="both")
-                        return True
-                    else:
-                        self.io_manager.interact_with_user("Please say 'Yes' or 'No'", mode="both")
+                if 'yes' in text_lower or 'yeah' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['online_mode'] = True
+                    self.io_manager.interact_with_user("Online mode enabled", mode="both")
+                    # Ask if they want to send a prompt
+                    return self._ask_prompt_option()
+                elif 'no' in text_lower or 'nope' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['online_mode'] = False
+                    self.io_manager.interact_with_user("Offline mode selected", mode="both")
+                    return True
                 else:
-                    self.io_manager.interact_with_user("I didn't hear anything. Please say 'Yes' or 'No'", mode="both")
+                    self.io_manager.clear_speech_queue()
+                    self.io_manager.interact_with_user("Please say 'Yes' or 'No'", mode="both")
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user("I didn't hear anything. Please say 'Yes' or 'No'", mode="both")
 
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Using offline mode by default.", mode="both")
             self.user_config['online_mode'] = False
 
@@ -547,37 +560,35 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Do you want to send a prompt? Say 'Yes' or 'No'", mode="both")
 
-            self.io_manager.start_audio_listening()
-            time.sleep(3)
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=3)
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
-                    text_lower = text.lower()
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
+                text_lower = text.lower()
 
-                    if 'yes' in text_lower or 'yeah' in text_lower:
-                        self.user_config['use_prompt'] = True
-                        self.io_manager.interact_with_user("Please say your prompt now", mode="both")
-                        return self._get_prompt_text()
-                    elif 'no' in text_lower or 'nope' in text_lower:
-                        self.user_config['use_prompt'] = False
-                        self.io_manager.interact_with_user("No prompt will be sent", mode="both")
-                        return True
-                    else:
-                        self.io_manager.interact_with_user("Please say 'Yes' or 'No'", mode="both")
+                if 'yes' in text_lower or 'yeah' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['use_prompt'] = True
+                    self.io_manager.interact_with_user("Please say your prompt now", mode="both")
+                    return self._get_prompt_text()
+                elif 'no' in text_lower or 'nope' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    self.user_config['use_prompt'] = False
+                    self.io_manager.interact_with_user("No prompt will be sent", mode="both")
+                    return True
                 else:
-                    self.io_manager.interact_with_user("I didn't hear anything. Please say 'Yes' or 'No'", mode="both")
+                    self.io_manager.clear_speech_queue()
+                    self.io_manager.interact_with_user("Please say 'Yes' or 'No'", mode="both")
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user("I didn't hear anything. Please say 'Yes' or 'No'", mode="both")
-
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. No prompt will be sent.", mode="both")
             self.user_config['use_prompt'] = False
 
@@ -589,26 +600,20 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
-            self.io_manager.start_audio_listening()
-            time.sleep(5)  # Longer time for prompt
-            self.io_manager.stop_audio_listening()
-
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
-                    self.user_config['prompt_text'] = text
-                    self.io_manager.interact_with_user(f"Prompt received: {text}", mode="both")
-                    return True
-                else:
-                    self.io_manager.interact_with_user("I didn't hear any prompt. Please speak again.", mode="both")
+            self.io_manager.clear_speech_queue()
+            text = self.io_manager.get_user_speech(max_duration=3)
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
+                self.user_config['prompt_text'] = text
+                self.io_manager.interact_with_user(f"Prompt received: {text}", mode="both")
+                return True
             else:
-                self.io_manager.interact_with_user("I didn't hear anything. Please speak again.", mode="both")
-
+                self.io_manager.clear_speech_queue()
+                self.io_manager.interact_with_user("I didn't hear any prompt. Please speak again.", mode="both")
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. No prompt will be used.", mode="both")
             self.user_config['use_prompt'] = False
 
@@ -620,28 +625,23 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Please say the text you want to translate", mode="both")
 
-            self.io_manager.start_audio_listening()
-            time.sleep(5)  # Longer time for speech input
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=3)
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
-                    self.user_config['speech_text'] = text
-                    self.io_manager.interact_with_user(f"Speech input received: {text}", mode="both")
-                    return True
-                else:
-                    self.io_manager.interact_with_user("I didn't hear anything. Please speak again.", mode="both")
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
+                self.user_config['speech_text'] = text
+                self.io_manager.interact_with_user(f"Speech input received: {text}", mode="both")
+                return True
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user("I didn't hear anything. Please speak again.", mode="both")
-
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Cancelling speech translation.", mode="both")
 
         return False
@@ -652,31 +652,28 @@ class ARGlassesAssistant:
         attempts = 0
 
         while attempts < max_attempts and self.running:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Say 'take' when you're ready to capture the image", mode="both")
 
-            self.io_manager.start_audio_listening()
-            time.sleep(3)
-            self.io_manager.stop_audio_listening()
+            text = self.io_manager.get_user_speech(max_duration=3)
 
-            audio = self.io_manager.get_user_audio()
-            if audio is not None and len(audio) > 0:
-                text = self.io_manager.service.recognize_text_from_speech(audio, self.speech_model)
-                if text:
-                    self.io_manager.gui.update_user_speech(f"You: {text}")
-                    text_lower = text.lower()
+            if text:
+                self.io_manager.gui.update_user_speech(f"You: {text}")
+                text_lower = text.lower()
 
-                    if 'take' in text_lower or 'capture' in text_lower or 'photo' in text_lower:
-                        return True
-                    else:
-                        self.io_manager.interact_with_user("Say 'take' to capture the image", mode="both")
+                if 'take' in text_lower or 'capture' in text_lower or 'photo' in text_lower:
+                    self.io_manager.clear_speech_queue()
+                    return True
                 else:
-                    self.io_manager.interact_with_user("I didn't hear anything. Say 'take' to capture the image", mode="both")
+                    self.io_manager.clear_speech_queue()
+                    self.io_manager.interact_with_user("Say 'take' to capture the image", mode="both")
             else:
+                self.io_manager.clear_speech_queue()
                 self.io_manager.interact_with_user("I didn't hear anything. Say 'take' to capture the image", mode="both")
-
             attempts += 1
 
         if attempts >= max_attempts:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Too many failed attempts. Cancelling picture capture.", mode="both")
 
         return False
@@ -691,6 +688,7 @@ class ARGlassesAssistant:
         image_path = self.io_manager.get_image()
 
         if not image_path:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Failed to capture image", mode="both")
             return
 
@@ -707,6 +705,7 @@ class ARGlassesAssistant:
         image_path = self.io_manager.get_image()
 
         if not image_path:
+            self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Failed to capture image", mode="both")
             return
 
@@ -714,45 +713,69 @@ class ARGlassesAssistant:
         self._process_offline_image_translation(image_path)
 
     def _process_speech_translation(self):
-        """Process speech translation using LLM Manager"""
         try:
-            speech_text = self.user_config.get('speech_text', '')
-            if not speech_text:
-                self.io_manager.interact_with_user("No speech text to translate", mode="both")
-                return
+            self.logger.info("Starting speech translation process")
 
-            # Prepare configuration for LLM Manager
-            llm_config = {
-                'translation_mode': 'text',
-                'source_lang': self.user_config['source_lang'],
-                'target_lang': self.user_config['target_lang']
+            # Validate configuration
+            if not all(k in self.user_config for k in ['source_lang', 'target_lang', 'speech_text']):
+                self.logger.error("Missing required translation parameters")
+                return {'success': False, 'error': 'Invalid configuration'}
+
+            text = self.user_config['speech_text']
+            self.logger.info(f"Processing translation for text: {text}")
+
+            # Get translation model
+            translation_result = self.llm_manager.get_translation_model(
+                self.user_config['source_lang'],
+                self.user_config['target_lang']
+            )
+
+            if not translation_result or not translation_result[2]:
+                self.logger.error("Failed to load translation model")
+                return {'success': False, 'error': 'Model loading failed'}
+
+            # Perform translation
+            self.logger.info("Executing translation...")
+            translated_text = self.llm_manager.translation_handler.translate_text(
+                text,
+                translation_result[0]  # pipeline object
+            )
+
+            if not translated_text:
+                self.logger.error("Translation returned no result")
+                return {'success': False, 'error': 'Translation failed'}
+
+            self.logger.info(f"Final translation: {translated_text}")
+            return {
+                'success': True,
+                'translated_text': translated_text,
+                'original_text': text
             }
 
-            # Show processing message
-            self.io_manager.interact_with_user("Translating text, please wait...", mode="display")
-
-            # Prepare input data for LLM Manager (add text to config)
-            llm_config['text'] = speech_text
-
-            # Process with LLM Manager
-            result = self.llm_manager.process_user_inputs(llm_config, None)
-
-            if result and result.get('success'):
-                translated_text = result.get('translated_text', '')
-                if translated_text:
-                    result_text = f"Original: {speech_text}\nTranslated: {translated_text}"
-                    self.io_manager.gui.update_ai_response(result_text)
-                    self.io_manager.interact_with_user(f"Translation: {translated_text}", mode="speech")
-                else:
-                    self.io_manager.interact_with_user("Translation failed - no output generated", mode="both")
-            else:
-                error = result.get('error', 'Unknown error') if result else 'Translation process failed'
-                self.io_manager.interact_with_user(f"Translation failed: {error}", mode="both")
-
         except Exception as e:
-            self.logger.error(f"Error in speech translation: {str(e)}")
-            self.io_manager.interact_with_user("Translation failed due to an error", mode="both")
+            self.logger.error(f"Translation process error: {str(e)}")
+            return {'success': False, 'error': str(e)}
 
+    def _validate_translation_config(self):
+        """Validate the current translation configuration"""
+        required_keys = [
+            'operation_type', 'input_type',
+            'source_lang', 'target_lang',
+            'translation_mode', 'speech_text' if self.user_config['input_type'] == 'speech' else None
+        ]
+        required_keys = [key for key in required_keys if key is not None]
+
+
+        missing = [key for key in required_keys if key not in self.user_config or not self.user_config[key]]
+        if missing:
+            self.logger.error(f"Missing configuration keys: {missing}")
+            return False
+
+        if self.user_config['operation_type'] == 'translate' and not self.user_config['translation_mode']:
+            self.logger.error("Missing translation mode")
+            return False
+
+        return True
     def _process_offline_image_translation(self, image_path):
         """Process offline image translation using LLM Manager"""
         try:

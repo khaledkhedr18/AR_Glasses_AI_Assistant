@@ -11,6 +11,7 @@ from utils.Logging import Logger
 from utils.WorkerThread import create_worker
 from vosk import KaldiRecognizer
 
+
 class AudioHandler:
     """
     Handles audio I/O operations including speech recognition and text-to-speech
@@ -32,11 +33,87 @@ class AudioHandler:
         self.stop_recording_event = None
         self.recording_mode = "offline"
         self.audio_save_dir = os.path.join(os.path.expanduser('~'), 'ar_glasses_audio')
+        self.speech_queue = []
+        self.current_speech_worker = None
+        self.speech_active = threading.Event()
+        self.speech_thread = None
+        self.speech_lock = threading.Lock()
+        self.stop_speech_event = threading.Event()
 
         # Create audio save directory if it doesn't exist
         if not os.path.exists(self.audio_save_dir):
             os.makedirs(self.audio_save_dir)
 
+        self._start_speech_processor()
+
+    def _start_speech_processor(self):
+        """Start the dedicated speech processing thread."""
+        def speech_processor():
+            while not self.stop_speech_event.is_set():
+                try:
+                    # Wait for speech items
+                    with self.speech_lock:
+                        if not self.speech_queue:
+                            time.sleep(0.1)
+                            continue
+
+                        text, on_finished = self.speech_queue.pop(0)
+
+                    # Process the speech item
+                    self._speak(text)
+
+                    # Call completion callback if provided
+                    if on_finished:
+                        try:
+                            on_finished()
+                        except Exception as e:
+                            self.logger.error(f"Speech completion callback error: {e}")
+
+                except Exception as e:
+                    self.logger.error(f"Speech processor error: {e}")
+                    time.sleep(0.5)
+
+        self.speech_thread = threading.Thread(target=speech_processor, daemon=True)
+        self.speech_thread.start()
+
+    def _speak(self, text):
+        """Internal method to actually speak text (blocking) with proper file descriptor handling"""
+        clean_text = " ".join(str(text).splitlines()).strip()
+        clean_text = clean_text.replace('"', '').replace("'", "")
+
+        self.logger.info(f"Speaking: {clean_text[:50]}...")
+        self.speech_active.set()
+
+        try:
+            # Use Popen with proper file descriptor handling
+            self.current_speech_process = subprocess.Popen(
+                ["flite", "-t", clean_text],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,  # Add stdin pipe
+                close_fds=True  # Ensure proper file descriptor handling
+            )
+
+            # Wait for process to complete with timeout
+            try:
+                stdout, stderr = self.current_speech_process.communicate(timeout=len(clean_text.split())*0.5 + 5)
+                if stderr:
+                    self.logger.warning(f"Speech output warnings: {stderr.decode('utf-8')}")
+            except subprocess.TimeoutExpired:
+                self.logger.warning("Speech output timed out - terminating")
+                self.current_speech_process.terminate()
+                try:
+                    self.current_speech_process.communicate(timeout=1)
+                except:
+                    pass
+            except Exception as e:
+                self.logger.error(f"Speech communication error: {e}")
+
+        except Exception as e:
+            self.logger.error(f"Speech output error: {e}")
+        finally:
+            self.current_speech_process = None
+            self.speech_active.clear()
     def record_and_recognize(self, model, max_duration=10):
         """
         Records audio and performs real-time speech recognition using VOSK model.
@@ -241,37 +318,34 @@ class AudioHandler:
 
     def output_speech(self, text, on_finished=None):
         """
-        Convert text to speech and play it through the system's audio output.
+        Queue text for speech output (non-blocking).
 
         Args:
-            text (str): The text to be spoken
-            on_finished: Optional callback when speech completes
-
-        Returns:
-            WorkerThread: The worker thread handling the TTS
+            text (str): Text to speak
+            on_finished (callable): Optional callback when speech completes
         """
-        def speak_task():
+        with self.speech_lock:
+            self.speech_queue.append((text, on_finished))
+
+    def stop_current_speech(self):
+        """Stop any currently playing speech immediately."""
+        if self.current_speech_process:
             try:
-                clean_text = " ".join(str(text).splitlines()).strip()
-                clean_text = clean_text.replace('"', '').replace("'", "")
+                self.current_speech_process.terminate()
+                self.current_speech_process.communicate(timeout=1)
+            except:
+                pass
+            self.current_speech_process = None
+            self.speech_active.clear()
 
-                # Direct output to default audio device instead of stdout
-                self.logger.info(f"Speaking: {clean_text[:50]}...")
-                subprocess.run(["flite", "-t", clean_text], check=True)
-                return True
-            except Exception as e:
-                self.logger.error(f"Speech output error: {str(e)}")
-                return False
+    def clear_speech_queue(self):
+        """Clear all pending speech items."""
+        with self.speech_lock:
+            self.speech_queue.clear()
 
-        worker = create_worker(
-            speak_task,
-            on_finished=lambda: self._handle_speech_finished(worker, on_finished),
-            task_name="text_to_speech"
-        )
-
-        self.active_tasks.append(worker)
-        worker.start()
-        return worker
+    def is_speaking(self):
+        """Check if speech is currently playing or queued."""
+        return self.speech_active.is_set() or (len(self.speech_queue) > 0)
 
     def mute_speech(self):
         """Stop any ongoing speech output."""
@@ -289,22 +363,45 @@ class AudioHandler:
         return stopped_count
 
     def cleanup(self):
-        """Clean up resources used by the AudioHandler."""
+        """Clean up all resources."""
         # Stop recording if active
         if self.listening:
             self.stop_recording()
 
-        # Stop all active tasks
-        for task in list(self.active_tasks):
-            task.stop()
+        # Stop speech processing
+        self.stop_speech_event.set()
+        self.stop_current_speech()
+        self.clear_speech_queue()
+
+        # Wait for speech thread to finish
+        if self.speech_thread and self.speech_thread.is_alive():
+            self.speech_thread.join(timeout=1)
 
         # Kill any lingering flite processes
         try:
-            subprocess.run(["pkill", "-f", "flite"], stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-f", "flite"],
+                         stderr=subprocess.DEVNULL,
+                         timeout=1)
         except:
             pass
 
-        self.active_tasks.clear()
+    def clear_queue(self):
+        """Clear all pending speech items and stop current speech."""
+        with self.speech_lock:
+            self.speech_queue.clear()
+            if self.current_speech_process:
+                try:
+                    self.current_speech_process.terminate()
+                    self.current_speech_process.communicate(timeout=0.5)
+                except:
+                    pass
+                self.current_speech_process = None
+            self.speech_active.clear()
+
+    def is_queue_empty(self):
+        """Check if speech queue is empty."""
+        with self.speech_lock:
+            return len(self.speech_queue) == 0 and not self.speech_active.is_set()
 
     def _record_audio_raw(self, stop_event):
         """
@@ -372,11 +469,13 @@ class AudioHandler:
 
     def _handle_speech_finished(self, worker, callback=None):
         """Handle completion of a speech task"""
-        self._remove_task(worker)
+
+        self.current_speech_worker = None
         if callback:
             callback()
 
     def _remove_task(self, task):
         """Remove a task from the active tasks list"""
-        if task in self.active_tasks:
-            self.active_tasks.remove(task)
+        with self.audio_lock:
+            if task in self.active_tasks:
+                self.active_tasks.remove(task)

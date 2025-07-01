@@ -179,37 +179,49 @@ class Services:
 
     def get_language_code(self, language):
         """
-        Convert language name to standardized code.
+        Convert language name to standardized code with enhanced validation.
 
         Args:
-            language (str): Language name (e.g. 'english') or code (e.g. 'en')
+            language (str): Language name or code
 
         Returns:
-            str: Standardized language code if valid, None otherwise
+            str: Standardized code or None if invalid
         """
         if not language:
+            self.logger.warning("Empty language input")
             return None
 
-        language = language.lower().strip()
+        try:
+            language = str(language).lower().strip()
 
-        # Check cache first
-        if language in self._lang_code_cache:
-            return self._lang_code_cache[language]
+            # Check cache first
+            if language in self._lang_code_cache:
+                return self._lang_code_cache[language]
 
-        # Get languages config with defaults
-        languages_config = SERVICES_CONFIG.get('LANGUAGES', {})
-        supported_codes = languages_config.get('SUPPORTED', ['en'])
-        lang_mapping = languages_config.get('MAPPING', {'english': 'en'})
+            # Get languages config with defaults
+            languages_config = SERVICES_CONFIG.get('LANGUAGES', {})
+            supported_codes = languages_config.get('SUPPORTED', ['en'])
+            lang_mapping = languages_config.get('MAPPING', {'english': 'en'})
 
-        # Try to get code
-        code = None
-        if language in supported_codes:
-            code = language
-        elif language in lang_mapping:
-            code = lang_mapping[language]
+            # Try to get code - check both keys and values
+            code = None
+            if language in supported_codes:
+                code = language
+            else:
+                # Check both keys and values in mapping
+                for key, value in lang_mapping.items():
+                    if language == key.lower() or language == value.lower():
+                        code = value
+                        break
 
-        # Update cache
-        if code:
-            self._lang_code_cache[language] = code
+            # Validate code
+            if code and code in supported_codes:
+                self._lang_code_cache[language] = code
+                return code
 
-        return code
+            self.logger.warning(f"Unsupported language: {language}")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Language code conversion error: {e}")
+            return None
