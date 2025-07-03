@@ -1,4 +1,5 @@
 import socket
+import os
 import json
 import base64
 import time
@@ -40,31 +41,38 @@ class SocketHandler:
 
     def check_internet_connection(self, timeout=None):
         """
-        Check if the device is connected to the internet.
-
-        Args:
-            timeout (float, optional): Connection timeout in seconds
-
-        Returns:
-            bool: True if connected, False otherwise
+        Check if the device has an active internet connection.
+        More robust implementation that tries multiple methods.
         """
         if timeout is None:
             timeout = NETWORK_CONFIG.get('STATUS_CHECK_TIMEOUT', 2.0)
 
-        # Try multiple URLs from config
-        urls = NETWORK_CONFIG.get('STATUS_CHECK_URLS', ['www.google.com'])
-        port = NETWORK_CONFIG.get('STATUS_CHECK_PORT', 80)
+        # Try multiple methods to confirm internet connectivity
+        test_urls = [
+            'www.google.com',  # Google
+            'www.cloudflare.com',  # Cloudflare
+            '1.1.1.1'  # Cloudflare DNS
+        ]
+        test_port = 80
 
-        for url in urls:
+        for url in test_urls:
             try:
-                self.logger.debug(f"Checking internet connection using {url}...")
-                sock = socket.create_connection((url, port), timeout=timeout)
+                # Try DNS resolution first
+                socket.getaddrinfo(url, test_port)
+
+                # Then try actual connection
+                sock = socket.create_connection((url, test_port), timeout=timeout)
                 sock.close()
+                self.logger.info(f"Internet connection confirmed via {url}")
                 return True
-            except (socket.error, OSError) as e:
-                self.logger.debug(f"Connection to {url} failed: {e}")
+            except (socket.gaierror, socket.timeout, ConnectionRefusedError) as e:
+                self.logger.debug(f"Connection test failed for {url}: {str(e)}")
+                continue
+            except Exception as e:
+                self.logger.debug(f"Unexpected error testing {url}: {str(e)}")
                 continue
 
+        self.logger.warning("All internet connection tests failed")
         return False
 
     def connect_to_server(self, max_retries=None):
@@ -107,19 +115,10 @@ class SocketHandler:
         self.file_obj = None
         self.sock = None
 
-    def send_and_receive(self, data_type, source_lang, target_lang, image_data=None, text=None):
+    def send_and_receive(self, data_type, source_lang, target_lang, image_data=None, text=None, audio_data=None):
         """
         Send a request to the server and receive the response.
-
-        Args:
-            data_type (str): Type of data being sent ("text", "image", or "text_and_image")
-            source_lang (str): Source language code
-            target_lang (str): Target language code
-            image_data (str, optional): Base64 encoded image data or image path
-            text (str, optional): Text to translate
-
-        Returns:
-            str or None: Server response if successful, None otherwise
+        Now supports audio data types.
         """
         if not self.connected:
             if not self.connect_to_server():
@@ -131,6 +130,10 @@ class SocketHandler:
                 success = self.send_image(image_data, source_lang, target_lang)
             elif data_type == "text" and text:
                 success = self.send_text(text, source_lang, target_lang)
+            elif data_type == "audio" and audio_data:
+                success = self.send_audio(audio_data, source_lang, target_lang)
+            elif data_type == "audio_and_image" and audio_data and image_data:
+                success = self.send_combined_audio_image(audio_data, image_data, source_lang, target_lang)
             elif data_type == "text_and_image" and image_data:
                 success = self.send_combined(text or "", image_data, source_lang, target_lang)
 
@@ -241,6 +244,71 @@ class SocketHandler:
             return True
         except Exception as e:
             self.logger.error(f"Error sending combined data: {e}")
+            return False
+
+    def send_audio(self, audio_path, source_lang, target_lang):
+        """Send audio file to server"""
+        if not self.connected:
+            return False
+
+        try:
+            if not os.path.exists(audio_path):
+                self.logger.error(f"Audio file not found: {audio_path}")
+                return False
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+
+            base64_audio = base64.b64encode(audio_bytes).decode('utf-8')
+            message = {
+                "type": "audio",
+                "data": base64_audio,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            data = json.dumps(message) + "\n"
+            self.sock.sendall(data.encode('utf-8'))
+            return True
+        except Exception as e:
+            self.logger.error(f"Error sending audio: {e}")
+            self.connected = False
+            return False
+
+    def send_combined_audio_image(self, audio_path, image_path, source_lang, target_lang):
+        """Send both audio and image to server"""
+        if not self.connected:
+            return False
+
+        try:
+            if not os.path.exists(audio_path):
+                self.logger.error(f"Audio file not found: {audio_path}")
+                return False
+            if not os.path.exists(image_path):
+                self.logger.error(f"Image file not found: {image_path}")
+                return False
+            # Read audio file
+            with open(audio_path, "rb") as audio_file:
+                audio_bytes = audio_file.read()
+            base64_audio = base64.b64encode(audio_bytes).decode('utf-8')
+
+            # Read image file
+            with open(image_path, "rb") as image_file:
+                image_bytes = image_file.read()
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+
+            message = {
+                "type": "audio_and_image",
+                "audio": base64_audio,
+                "image": base64_image,
+                "source_lang": source_lang,
+                "target_lang": target_lang,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            data = json.dumps(message) + "\n"
+            self.sock.sendall(data.encode('utf-8'))
+            return True
+        except Exception as e:
+            self.logger.error(f"Error sending combined audio+image: {e}")
             return False
 
     def receive_response(self, timeout=None):

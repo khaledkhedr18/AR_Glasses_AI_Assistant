@@ -10,7 +10,7 @@ from datetime import datetime
 from utils.Logging import Logger
 from utils.WorkerThread import create_worker
 from vosk import KaldiRecognizer
-
+from utils.Config import IO_CONFIG
 
 class AudioHandler:
     """
@@ -32,14 +32,14 @@ class AudioHandler:
         self.recording_thread = None
         self.stop_recording_event = None
         self.recording_mode = "offline"
-        self.audio_save_dir = os.path.join(os.path.expanduser('~'), 'ar_glasses_audio')
         self.speech_queue = []
         self.current_speech_worker = None
         self.speech_active = threading.Event()
         self.speech_thread = None
         self.speech_lock = threading.Lock()
         self.stop_speech_event = threading.Event()
-
+        self.audio_save_dir = IO_CONFIG.get('AUDIO', {}).get('SAVE_DIRECTORY', './tmp/audio_files')
+        self.max_duration = IO_CONFIG.get('AUDIO', {}).get('MAX_DURATION', 10)
         # Create audio save directory if it doesn't exist
         if not os.path.exists(self.audio_save_dir):
             os.makedirs(self.audio_save_dir)
@@ -190,13 +190,9 @@ class AudioHandler:
 
     def start_recording(self, mode="offline"):
         """
-        Start recording audio without processing.
-
-        Args:
-            mode (str): "online" to save to file, "offline" to keep in memory
-
-        Returns:
-            bool: True if recording started successfully
+        Starts audio recording - can be used for:
+        - General recording (mode="offline")
+        - Prompt recording (mode="online") which saves to ./tmp/audio_files
         """
         with self.audio_lock:
             if self.listening:
@@ -218,6 +214,7 @@ class AudioHandler:
             self.recording_thread.start()
 
             return True
+
 
     def stop_recording(self):
         """
@@ -273,6 +270,31 @@ class AudioHandler:
                 self.listening = False
                 self.stop_recording_event = None
                 self.recording_thread = None
+
+    def record_prompt_audio(self, max_duration=None):
+        """
+        Records audio specifically for prompts and saves to ./tmp/audio_files
+        Returns path to saved audio file or None if failed
+
+        This is the main function called when we need to record a prompt for the server
+        """
+        if max_duration is None:
+            max_duration = self.max_duration
+
+        if not self.start_recording(mode="online"):
+            self.logger.error("Failed to start prompt recording")
+            return None
+
+        # Wait for recording to complete
+        time.sleep(max_duration)
+        audio_file = self.stop_recording()
+
+        if audio_file and os.path.exists(audio_file):
+            self.logger.info(f"Prompt audio saved to: {audio_file}")
+            return audio_file
+
+        self.logger.error("Prompt audio recording failed")
+        return None
 
     def get_audio(self, file_path):
         """
@@ -437,20 +459,15 @@ class AudioHandler:
 
     def _save_audio_to_file(self, audio_data):
         """
-        Save audio data to file in WAV and MP3 formats.
-
-        Args:
-            audio_data (numpy.ndarray): Audio data to save
-
-        Returns:
-            str: Path to the saved MP3 file
+        Saves recorded audio to ./tmp/audio_files
+        Called automatically when recording in "online" mode
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        wav_path = os.path.join(self.audio_save_dir, f"recording_{timestamp}.wav")
-        mp3_path = os.path.join(self.audio_save_dir, f"recording_{timestamp}.mp3")
+        wav_path = os.path.join(self.audio_save_dir, f"prompt_{timestamp}.wav")
+        mp3_path = os.path.join(self.audio_save_dir, f"prompt_{timestamp}.mp3")
 
-        # Save as WAV first
         try:
+            # Save as WAV first
             wavfile.write(wav_path, self.sample_rate, audio_data)
 
             # Convert to MP3 using ffmpeg
@@ -462,7 +479,6 @@ class AudioHandler:
             # Remove the temporary WAV file
             os.remove(wav_path)
             return mp3_path
-
         except Exception as e:
             self.logger.error(f"Error saving audio file: {e}")
             return None

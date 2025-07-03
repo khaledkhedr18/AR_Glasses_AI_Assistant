@@ -9,11 +9,33 @@ class OCRHandler:
     def __init__(self):
         self.logger = Logger()
         self.logger.info("Initializing OCR Handler")
+        pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+        os.environ['TESSDATA_PREFIX'] = '/usr/share/tesseract-ocr/5/tessdata/'
+
 
         # Initialize OCR configurations with dictionary access
         self.__load_config()
+        self.__initialize_tesseract()
 
-    def extract_text_from_frame(self, frame, lang="en", save_processed=False, mode=None):
+    def __initialize_tesseract(self):
+        """Configure Tesseract paths and verify installation"""
+        try:
+            # Set Tesseract paths from config
+            pytesseract.pytesseract.tesseract_cmd = OCR_CONFIG['TESSERACT_PATHS']['cmd']
+            os.environ['TESSDATA_PREFIX'] = OCR_CONFIG['TESSERACT_PATHS']['data']
+
+            # Verify installation
+            available_langs = pytesseract.get_languages(config='')
+            self.logger.info(f"Available Tesseract languages: {available_langs}")
+
+            if not available_langs:
+                raise RuntimeError("No Tesseract languages found")
+
+        except Exception as e:
+            self.logger.error(f"Tesseract initialization failed: {str(e)}")
+            raise RuntimeError("Could not initialize Tesseract OCR")
+
+    def extract_text_from_frame(self, frame, lang="eng", save_processed=False, mode=None):
         """
         Extract text from camera frame array using OCR.
         """
@@ -24,6 +46,13 @@ class OCRHandler:
 
             mode = mode or self.default_mode
             processed = self.__preprocess_image(frame)
+
+            if lang == 'en':
+                lang = 'eng'
+            elif lang == 'ar':
+                lang = 'ara'
+            elif lang == 'fr':
+                lang = 'fra'
 
             if save_processed:
                 save_path = os.path.join(self.save_directory, self.processed_frame_filename)
@@ -42,6 +71,10 @@ class OCRHandler:
         except Exception as e:
             self.logger.log_error_with_traceback("OCR Error", e)
             return ""
+
+    def get_tesseract_lang_code(self, lang_code):
+        """Convert two-letter language code to Tesseract's three-letter code"""
+        return self.lang_map.get(lang_code.lower(), 'eng')
 
     def set_preprocessing_level(self, level):
         """Set image preprocessing level."""
@@ -96,6 +129,14 @@ class OCRHandler:
     def __load_config(self):
         """Load configuration settings for OCR."""
         # Load processing settings with defaults
+        self.lang_map = OCR_CONFIG.get('LANGUAGE_MAPPING', {
+            'en': 'eng',
+            'ar': 'ara',
+            'fr': 'fra'
+        })
+
+        self.preprocessing_level = OCR_CONFIG.get('PROCESSING', {}).get('LEVEL', 'medium')
+        # ...
         processing_config = OCR_CONFIG.get('PROCESSING', {})
         self.preprocessing_level = processing_config.get('LEVEL', 'medium')
         self.thresh_value = processing_config.get('THRESH_VALUE', 150)

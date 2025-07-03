@@ -14,6 +14,7 @@ from Managers.IO_Manager import IOManager
 from Managers.LLM_Manager import LLMManager
 from utils.Socket_Handler import SocketHandler
 from utils.WorkerThread import create_worker
+import base64
 
 
 class ARGlassesAssistant:
@@ -36,6 +37,7 @@ class ARGlassesAssistant:
         self.main_window = None
         self.shutting_down = False
         self.wake_word_detected = False
+        self.last_online_status = None
 
         # User configuration storage
         self.user_config = {
@@ -93,7 +95,8 @@ class ARGlassesAssistant:
             self.widgets = self.io_manager.create_all_overlay_widgets()
 
             # Update status to show we're ready
-            self.io_manager.gui.update_status("System initialized", True)
+            self._setup_status_monitor()
+            self._update_system_status()
             self.logger.info("Application initialized successfully")
             return True
 
@@ -139,6 +142,54 @@ class ARGlassesAssistant:
         except Exception as e:
             self.logger.error(f"Error starting application: {str(e)}")
             self.running = False
+            return False
+
+    def _setup_status_monitor(self):
+        """Start periodic status updates"""
+        self.status_timer = threading.Timer(
+            interval=5.0,  # Check every 5 seconds
+            function=self._status_monitor_loop
+        )
+        self.status_timer.daemon = True
+        self.status_timer.start()
+        self.logger.info("Status monitor started")
+
+    def _status_monitor_loop(self):
+        """Continuous status monitoring loop"""
+        while self.running:
+            self._update_system_status()
+            time.sleep(5)  # 5 second interval
+
+        self.logger.info("Status monitor stopped")
+
+
+    def _update_system_status(self):
+        """Check and update system status through all layers"""
+        try:
+            # Check internet connection
+            is_online = self.socket_handler.check_internet_connection()
+
+            # Debug log to verify connection status
+            self.logger.info(f"Internet connection status: {'Online' if is_online else 'Offline'}")
+
+            # Only update if status changed or this is the first check
+            if not hasattr(self, 'last_online_status') or is_online != self.last_online_status:
+                self.last_online_status = is_online
+                status_text = "System operational"
+
+                # Update the status widget through IO_Manager
+                if hasattr(self, 'io_manager') and self.io_manager:
+                    # First update the GUI directly
+                    self.io_manager.gui.update_status(status_text, is_online)
+
+                    # Then speak the status if it changed
+                    status_message = f"You are now {'online' if is_online else 'offline'}"
+                    self.io_manager.interact_with_user(status_message, mode="speech")
+
+                return True
+
+        except Exception as e:
+            self.logger.error(f"Status update failed: {str(e)}")
             return False
 
     def _processing_loop(self):
@@ -209,20 +260,24 @@ class ARGlassesAssistant:
             self._reset_user_config()
 
             # Step 1: Ask for operation type (OCR or Translate)
-            operation_success = self._ask_operation_type()
+            operation_success = self._ask_input_type()
             if not operation_success:
                 self.io_manager.interact_with_user("Operation selection failed.", mode="both")
                 self._reset_conversation()
                 return
             self.io_manager.clear_speech_queue()
 
-            # Handle the selected operation
-            if self.user_config['operation_type'] == 'translate':
-                self._handle_translation_flow()
-            elif self.user_config['operation_type'] == 'ocr':
-                self._handle_ocr_flow()
+            online_success = self._ask_online_mode()
+            # if not online_success:
+            #     self.io_manager.interact_with_user("Mode selection failed.", mode="both")
+            #     self._reset_conversation()
+            #     return
+            self.io_manager.clear_speech_queue()
+
+            if online_success:
+                self._handle_online_flow()
             else:
-                self.io_manager.interact_with_user("Operation cancelled.", mode="both")
+                self._handle_offline_flow()
 
             # Save configuration and reset for next conversation
             self._save_config()
@@ -232,6 +287,135 @@ class ARGlassesAssistant:
             self.logger.error(f"Error in conversation flow: {str(e)}")
             self.io_manager.interact_with_user("An error occurred.", mode="both")
             self._reset_conversation()
+
+    def _handle_online_flow(self):
+        """Handle the online mode workflow"""
+        if self.user_config['input_type'] == 'speech':
+            self.user_config['use_prompt'] = True
+            self._handle_online_speech_translation()
+        else:
+            self._handle_online_image_translation()
+
+
+    def _handle_offline_flow(self):
+        """Handle the offline mode workflow"""
+        # Ask for operation type (OCR or Translate)
+        operation_success = self._ask_operation_type()
+        if not operation_success:
+            self.io_manager.interact_with_user("Operation selection failed.", mode="both")
+            return
+        self.io_manager.clear_speech_queue()
+
+        # Handle the selected operation
+        if self.user_config['operation_type'] == 'translate':
+            self._handle_offline_translation_flow()
+        elif self.user_config['operation_type'] == 'ocr':
+            self._handle_ocr_flow()
+
+    def _handle_online_speech_translation(self):
+        """Handle online speech translation workflow"""
+        # Ask if they want to send a prompt
+        prompt_audio_path = None
+        if self.user_config['use_prompt']:
+            # Get the prompt text
+            prompt_audio_path = self.io_manager.get_user_audio_prompt()
+            if not prompt_audio_path:
+                return
+
+        # Send request to server
+        self._send_online_speech_request(prompt_audio_path=prompt_audio_path)
+
+    def _handle_online_image_translation(self):
+        """Handle online image translation workflow"""
+        # Ask if they want to send a prompt
+        if not self._ask_prompt_option():
+            return
+
+        if self.user_config['use_prompt']:
+            # Get the prompt text
+            prompt_audio_path = self.io_manager.get_user_audio_prompt()
+            if not prompt_audio_path:
+                return
+
+        # Capture image
+        if not self._ask_take_picture():
+            return
+
+        self.io_manager.interact_with_user("Capturing image...", mode="display")
+        image_path = self.io_manager.get_image()
+
+        if not image_path:
+            self.io_manager.clear_speech_queue()
+            self.io_manager.interact_with_user("Failed to capture image", mode="both")
+            return
+
+        # Send to server
+        self._send_online_request(image_path, prompt_audio_path=prompt_audio_path)
+
+    def _handle_offline_translation_flow(self):
+        """Handle offline translation workflow"""
+                # Get source language
+        if not self._ask_source_language():
+            return None
+
+        # Get target language
+        if not self._ask_target_language():
+            return None
+
+        # Handle the selected input type
+        if self.user_config['input_type'] == 'image':
+            self._handle_offline_image_translation()
+        elif self.user_config['input_type'] == 'speech':
+            self._handle_speech_translation()
+
+    def _send_online_speech_request(self, prompt_audio_path=None):
+        """Send speech request to online server"""
+        try:
+            # Connect to server
+            self.io_manager.interact_with_user("Connecting to server...", mode="display")
+            if not self.socket_handler.connect_to_server():
+                self.io_manager.interact_with_user("Could not connect to server", mode="both")
+                return
+
+            # Prepare request
+            self.io_manager.interact_with_user("Sending request to server...", mode="display")
+
+            # Send appropriate request type
+            if self.user_config['use_prompt'] and prompt_audio_path:
+                # Send combined request with prompt
+                response = self.socket_handler.send_and_receive(
+                    "audio",
+                    "en",
+                    "en",
+                    audio_data=prompt_audio_path,
+                )
+            else:
+                # Send speech only
+                response = self.socket_handler.send_and_receive(
+                    "text",
+                    "en",  # Default source language for online
+                    "en",  # Default target language for online
+                    text=self.user_config.get('prompt_text', '')
+                )
+
+            # Process response
+            if response:
+                self.io_manager.gui.update_ai_response(f"Server response: {response}")
+                self.io_manager.interact_with_user(f"Online processing completed response is: {response}", mode="both")
+                time.sleep(5)
+            else:
+                self.io_manager.interact_with_user("No response from server", mode="both")
+
+        except Exception as e:
+            self.logger.error(f"Error in online request: {str(e)}")
+            self.io_manager.interact_with_user("Online processing failed due to an error", mode="both")
+        finally:
+            # Always disconnect from server
+            try:
+                self.socket_handler.disconnect_from_server()
+            except:
+                pass
+
 
     def _reset_user_config(self):
         """Reset user configuration to defaults"""
@@ -368,15 +552,6 @@ class ARGlassesAssistant:
             'use_prompt': False,
             'translation_mode': 'text'
         })
-
-
-        # Get source language
-        if not self._ask_source_language():
-            return None
-
-        # Get target language
-        if not self._ask_target_language():
-            return None
 
         # Get speech input
         if not self._get_speech_input():
@@ -532,12 +707,12 @@ class ARGlassesAssistant:
                     self.user_config['online_mode'] = True
                     self.io_manager.interact_with_user("Online mode enabled", mode="both")
                     # Ask if they want to send a prompt
-                    return self._ask_prompt_option()
+                    return True
                 elif 'no' in text_lower or 'nope' in text_lower:
                     self.io_manager.clear_speech_queue()
                     self.user_config['online_mode'] = False
                     self.io_manager.interact_with_user("Offline mode selected", mode="both")
-                    return True
+                    return False
                 else:
                     self.io_manager.clear_speech_queue()
                     self.io_manager.interact_with_user("Please say 'Yes' or 'No'", mode="both")
@@ -572,8 +747,7 @@ class ARGlassesAssistant:
                 if 'yes' in text_lower or 'yeah' in text_lower:
                     self.io_manager.clear_speech_queue()
                     self.user_config['use_prompt'] = True
-                    self.io_manager.interact_with_user("Please say your prompt now", mode="both")
-                    return self._get_prompt_text()
+                    return True
                 elif 'no' in text_lower or 'nope' in text_lower:
                     self.io_manager.clear_speech_queue()
                     self.user_config['use_prompt'] = False
@@ -601,7 +775,8 @@ class ARGlassesAssistant:
 
         while attempts < max_attempts and self.running:
             self.io_manager.clear_speech_queue()
-            text = self.io_manager.get_user_speech(max_duration=3)
+            self.io_manager.interact_with_user("Please say your prompt now", mode="both")
+            text = self.io_manager.get_user_speech(max_duration=10)
             if text:
                 self.io_manager.gui.update_user_speech(f"You: {text}")
                 self.user_config['prompt_text'] = text
@@ -628,7 +803,7 @@ class ARGlassesAssistant:
             self.io_manager.clear_speech_queue()
             self.io_manager.interact_with_user("Please say the text you want to translate", mode="both")
 
-            text = self.io_manager.get_user_speech(max_duration=3)
+            text = self.io_manager.get_user_speech(max_duration=5)
 
             if text:
                 self.io_manager.gui.update_user_speech(f"You: {text}")
@@ -677,23 +852,6 @@ class ARGlassesAssistant:
             self.io_manager.interact_with_user("Too many failed attempts. Cancelling picture capture.", mode="both")
 
         return False
-
-    def _handle_online_image_translation(self):
-        """Handle online image translation with server"""
-        if not self._ask_take_picture():
-            return
-
-        # Capture image
-        self.io_manager.interact_with_user("Capturing image...", mode="display")
-        image_path = self.io_manager.get_image()
-
-        if not image_path:
-            self.io_manager.clear_speech_queue()
-            self.io_manager.interact_with_user("Failed to capture image", mode="both")
-            return
-
-        # Send to server
-        self._send_online_request(image_path)
 
     def _handle_offline_image_translation(self):
         """Handle offline image translation"""
@@ -870,7 +1028,7 @@ class ARGlassesAssistant:
             self.logger.error(f"Error in OCR processing: {str(e)}")
             self.io_manager.interact_with_user("OCR failed due to an error", mode="both")
 
-    def _send_online_request(self, image_path):
+    def _send_online_request(self, image_path, prompt_audio_path=None):
         """Send request to online server"""
         try:
             # Connect to server
@@ -885,16 +1043,18 @@ class ARGlassesAssistant:
             # Convert source and target languages to codes
             source_code = self.user_config['source_lang']  # Should already be a code
             target_code = self.user_config['target_lang']  # Should already be a code
+            with open(image_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
 
             # Send appropriate request type
-            if self.user_config['use_prompt'] and self.user_config.get('prompt_text'):
+            if self.user_config['use_prompt'] and prompt_audio_path:
                 # Send combined request with prompt
                 response = self.socket_handler.send_and_receive(
-                    "text_and_image",
-                    source_code,
-                    target_code,
-                    image_data=image_path,
-                    text=self.user_config.get('prompt_text', '')
+                    "audio_and_image",
+                    "en",
+                    "en",
+                    image_data=image_data,
+                    audio_data=prompt_audio_path
                 )
             else:
                 # Send image only
@@ -908,7 +1068,8 @@ class ARGlassesAssistant:
             # Process response
             if response:
                 self.io_manager.gui.update_ai_response(f"Server response: {response}")
-                self.io_manager.interact_with_user("Online translation complete", mode="both")
+                self.io_manager.interact_with_user(f"Online translation completed response is: {response}", mode="both")
+                time.sleep(5)
             else:
                 self.io_manager.interact_with_user("No response from server", mode="both")
 
@@ -977,6 +1138,8 @@ class ARGlassesAssistant:
 
             # Stop processing loop
             self.running = False
+            if hasattr(self, 'status_timer'):
+                self.status_timer.cancel()
             self.wake_word_detected = False
 
             # Stop camera stream

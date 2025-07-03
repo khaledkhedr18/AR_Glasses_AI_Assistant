@@ -1,8 +1,5 @@
-import gc
 import os
 import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 import numpy as np
 from transformers import pipeline
 from vosk import Model

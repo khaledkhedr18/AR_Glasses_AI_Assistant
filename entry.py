@@ -11,6 +11,8 @@ import time
 import gc
 from pathlib import Path
 
+os.environ['TESSDATA_PREFIX'] = '/usr/share/tesseract-ocr/5/tessdata/'
+
 def setup_environment():
     """Setup the environment for running the application"""
     print("\n" + "=" * 60)

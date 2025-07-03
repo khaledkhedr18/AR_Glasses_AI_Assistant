@@ -16,7 +16,7 @@ OVERLAY_WIDGET_CONFIGS = {
         """,
         "alignment": "center",
         "size": (200, 40),
-        "position": (300, 20),
+        "position": "center_top",  # Special value we'll handle in Qt_Handler
         "default_text": "Status: INITIALIZING"
     },
     "user_speech": {
@@ -30,7 +30,7 @@ OVERLAY_WIDGET_CONFIGS = {
             }
         """,
         "size": (300, 100),
-        "position": (480, 360),
+        "position": "bottom_right",  # Special value
         "word_wrap": True,
         "default_text": "You: "
     },
@@ -45,7 +45,7 @@ OVERLAY_WIDGET_CONFIGS = {
             }
         """,
         "size": (300, 100),
-        "position": (20, 360),
+        "position": "bottom_left",  # Special value
         "word_wrap": True,
         "default_text": "Assistant: Ready"
     }
@@ -62,7 +62,7 @@ CAMERA_CONFIG = {
     # Image settings
     'IMAGE': {
         'QUALITY': 90,
-        'SAVE_DIRECTORY': r"/tmp/AIAssistant/",
+        'SAVE_DIRECTORY': r"./tmp/AIAssistant/",
         'FILENAME': "captured_image.jpg"
     },
 
@@ -93,7 +93,11 @@ IO_CONFIG = {
         'FRAME_INTERVAL': 0.03,  # 30fps
         'AUDIO_RECORD_TIMEOUT': 3
     },
-
+    'AUDIO': {
+        'SAVE_DIRECTORY': r"./tmp/audio_files/",
+        'MAX_DURATION': 10
+    }
+    ,
     # Interface settings
     'INTERFACE': {
         'MAX_ATTEMPTS': 3,
@@ -143,6 +147,17 @@ IO_CONFIG = {
 
 # OCR Configuration
 OCR_CONFIG = {
+    'LANGUAGE_MAPPING': {
+        # Two-letter to three-letter code mapping
+        'en': 'eng',
+        'ar': 'ara',
+        'fr': 'fra',
+        # Add more languages as needed
+    },
+    'TESSERACT_PATHS': {
+        'cmd': '/usr/bin/tesseract',
+        'data': '/usr/share/tesseract-ocr/5/tessdata/'
+    },
     'MODES': {
         'DEFAULT': '--oem 3 --psm 3',
         'ACCURATE': '--oem 3 --psm 6'
@@ -174,12 +189,13 @@ ML_CONFIG = {
         'MODELS_LOAD_TIMEOUT': 60,  # Increased timeout for Pi
         'MODELS_CACHE_DIR': './models/translation/cache',
         'SUPPORTED_SPEECH_MODELS': ['en'],
-        # Only load one translation pair by default to reduce startup time
         'SUPPORTED_TRANSLATION_PAIRS': [
-            ('en', 'ar'),  # English to Arabic - most commonly used
+            ('en', 'ar'),
+            ('en', 'fr'),
+            ('ar', 'en'),
         ],
-        'MAX_WORKERS': 1,  # Reduced for Pi to prevent resource conflicts
-        'USE_LOW_MEMORY': False,  # Disabled by default for Pi compatibility
+        'MAX_WORKERS': 2,
+        'USE_LOW_MEMORY': False,
     }
 }
 
@@ -216,7 +232,7 @@ LLM_CONFIG = {
 # Network Manager Configuration
 NETWORK_CONFIG = {
     # Server connection settings
-    'SERVER_IP': '192.168.1.65',
+    'SERVER_IP': '192.168.1.108',
     'SERVER_PORT': 4040,
     'SOCKET_TIMEOUT': 5,  # seconds
     'MAX_RETRIES': 3,

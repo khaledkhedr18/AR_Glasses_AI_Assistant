@@ -178,6 +178,7 @@ class IOManager:
                 return self.service.verify_user_input(text, self.supported_languages)
             return None
 
+
         def __get_user_mode(prompt):
             """
             Asks user for translation mode and returns the selected mode (speech, image, or both)
@@ -240,6 +241,36 @@ class IOManager:
         self.logger.info(final_config)
         self.interact_with_user(final_config)
         return config if all(config.values()) else None
+
+    def update_status(self, status_text, is_online=None):
+        return self.gui.update_status(status_text, is_online)
+
+    def get_user_audio_prompt(self, max_duration=None):
+        """
+        Gets an audio prompt from user and saves to ./tmp/audio_files
+        Returns path to recorded audio file or None if failed
+
+        This is the main interface function called from the main application
+        when we need to record a prompt for the server
+        """
+        with self.audio_lock:
+            try:
+                self.interact_with_user("Please speak your prompt now", mode="both")
+
+                # Record audio - will automatically save to ./tmp/audio_files
+                audio_file = self.audio.record_prompt_audio(max_duration)
+
+                if audio_file:
+                    self.logger.info(f"Audio prompt recorded at: {audio_file}")
+                    self.interact_with_user("Prompt recorded successfully", mode="both")
+                    return audio_file
+
+                self.interact_with_user("Failed to record prompt", mode="both")
+                return None
+
+            except Exception as e:
+                self.logger.error(f"Error getting audio prompt: {e}")
+                return None
 
     def get_user_command(self):
         """

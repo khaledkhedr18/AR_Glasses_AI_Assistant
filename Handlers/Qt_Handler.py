@@ -218,16 +218,7 @@ class QtHandler:
 
 
     def create_overlay_widget(self, widget_type, config=None):
-        """
-        Create and configure an overlay widget based on the specified type and configuration
-
-        Args:
-            widget_type (str): Type identifier for the widget
-            config (dict, optional): Configuration for the widget
-
-        Returns:
-            QWidget: The created widget instance
-        """
+        """Create and configure an overlay widget based on the specified type and configuration"""
         self.logger.debug(f"Creating overlay widget: {widget_type}")
         start_time = time.time()
 
@@ -265,9 +256,26 @@ class QtHandler:
             if "size" in widget_config:
                 widget.setFixedSize(*widget_config["size"])
 
-            # Set position
-            if "position" in widget_config:
-                widget.move(*widget_config["position"])
+            # Calculate position based on special values
+            position = widget_config.get("position")
+            if position == "center_top":
+                # Center horizontally, near top
+                x = (self.main_window.width() - widget.width()) // 2
+                y = 20
+                widget.move(x, y)
+            elif position == "bottom_left":
+                # Left side, near bottom
+                x = 20
+                y = self.main_window.height() - widget.height() - 20
+                widget.move(x, y)
+            elif position == "bottom_right":
+                # Right side, near bottom
+                x = self.main_window.width() - widget.width() - 20
+                y = self.main_window.height() - widget.height() - 20
+                widget.move(x, y)
+            elif isinstance(position, (tuple, list)) and len(position) == 2:
+                # Regular absolute position
+                widget.move(*position)
 
             # Set word wrap
             if widget_config.get("word_wrap", False):
@@ -331,10 +339,6 @@ class QtHandler:
         self.create_overlay_widget("user_speech")
         self.create_overlay_widget("ai_response")
 
-        # Start status check timer
-        self.status_check_timer = QTimer(self.main_window)
-        self.status_check_timer.timeout.connect(self.check_status)
-        self.status_check_timer.start(1000)  # Check every second
 
         return {
             "status": self.status_label if hasattr(self, "status_label") else None,
@@ -542,6 +546,12 @@ class QtHandler:
         except Exception as e:
             self.logger.error(f"Failed to create worker thread: {str(e)}")
             return None
+
+    def resizeEvent(self, event):
+        """Handle window resize events to maintain widget positions"""
+        super().resizeEvent(event)
+        self.adjust_overlay_positions()
+
     def cleanup_worker(self, worker):
         """Remove a worker thread from the tracking list when it finishes"""
         if worker in self.worker_threads:
@@ -571,37 +581,24 @@ class QtHandler:
     def adjust_overlay_positions(self):
         """Adjust overlay positions when window size changes"""
         if not self.main_window:
-            self.logger.warning("Cannot adjust overlay positions: main_window is None")
             return
 
-        try:
-            start_time = time.time()
-            width = self.main_window.width()
-            height = self.main_window.height()
+        for widget_id, widget_info in self.overlay_widgets.items():
+            widget = widget_info["widget"]
+            position = widget_info["config"].get("position")
 
-            self.logger.debug(f"Adjusting overlays for window size: {width}x{height}")
-
-            # Status in top center
-            if hasattr(self, 'status_label'):
-                self.status_label.move((width - self.status_label.width()) // 2, 20)
-
-            # User speech in bottom right
-            if hasattr(self, 'user_speech_label'):
-                self.user_speech_label.move(
-                    width - self.user_speech_label.width() - 20,
-                    height - self.user_speech_label.height() - 20
-                )
-
-            # AI response in bottom left
-            if hasattr(self, 'ai_response_label'):
-                self.ai_response_label.move(20, height - self.ai_response_label.height() - 20)
-
-            # Log performance for UI adjustment
-            duration = time.time() - start_time
-            self.logger.log_performance("adjust_overlays", duration)
-
-        except Exception as e:
-            self.logger.error(f"Failed to adjust overlay positions: {str(e)}")
+            if position == "center_top":
+                x = (self.main_window.width() - widget.width()) // 2
+                y = 20
+                widget.move(x, y)
+            elif position == "bottom_left":
+                x = 20
+                y = self.main_window.height() - widget.height() - 20
+                widget.move(x, y)
+            elif position == "bottom_right":
+                x = self.main_window.width() - widget.width() - 20
+                y = self.main_window.height() - widget.height() - 20
+                widget.move(x, y)
 
     def run(self):
         """Run the application main loop"""
@@ -722,29 +719,6 @@ class QtHandler:
         except Exception as e:
             self.logger.error(f"Failed to delete widget: {str(e)}")
             return False
-
-    def check_status(self):
-        """
-        Periodically check system status and update the status label
-        Called automatically by the status_check_timer
-        """
-        try:
-            # Check if we're online
-            is_online = True  # You can replace this with actual network check
-
-            # You can add additional status checks here:
-            # - Network connectivity
-            # - Camera status
-            # - Audio device status
-            # etc.
-
-            # Update the status display
-            if hasattr(self, 'status_label'):
-                current_status = "System operational"
-                self.update_status(current_status, is_online)
-
-        except Exception as e:
-            self.logger.error(f"Error in status check: {str(e)}")
 
     def _update_widget_text(self, widget_instance, text):
         """
