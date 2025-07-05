@@ -259,7 +259,6 @@ class ARGlassesAssistant:
             # Reset user configuration
             self._reset_user_config()
 
-            # Step 1: Ask for operation type (OCR or Translate)
             operation_success = self._ask_input_type()
             if not operation_success:
                 self.io_manager.interact_with_user("Operation selection failed.", mode="both")
@@ -267,11 +266,11 @@ class ARGlassesAssistant:
                 return
             self.io_manager.clear_speech_queue()
 
-            online_success = self._ask_online_mode()
-            # if not online_success:
-            #     self.io_manager.interact_with_user("Mode selection failed.", mode="both")
-            #     self._reset_conversation()
-            #     return
+            if self.last_online_status:
+                online_success = self._ask_online_mode()
+            else:
+                online_success = False
+
             self.io_manager.clear_speech_queue()
 
             if online_success:
@@ -434,6 +433,10 @@ class ARGlassesAssistant:
         """Ask user to choose between OCR or Translate"""
         max_attempts = 3
         attempts = 0
+
+        if self.user_config['input_type'] == 'speech':
+            self.user_config['operation_type'] = 'translate'
+            return True
 
         while attempts < max_attempts and self.running:
             self.io_manager.clear_speech_queue()
