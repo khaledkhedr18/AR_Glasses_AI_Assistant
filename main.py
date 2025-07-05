@@ -902,6 +902,12 @@ class ARGlassesAssistant:
             if not translated_text:
                 self.logger.error("Translation returned no result")
                 return {'success': False, 'error': 'Translation failed'}
+            result_text = f"Original: {text}\nTranslated: {translated_text}"
+            self.io_manager.gui.update_ai_response(result_text)
+            self.io_manager.interact_with_user(f"Translation: {translated_text}", mode="both")
+
+            # Wait for a few seconds before resetting
+            time.sleep(5)  # Display for 5 seconds
 
             self.logger.info(f"Final translation: {translated_text}")
             return {
@@ -964,9 +970,11 @@ class ARGlassesAssistant:
                     result_text = f"Extracted: {original_text}\nTranslated: {translated_text}"
                     self.io_manager.gui.update_ai_response(result_text)
                     self.io_manager.interact_with_user("Translation complete", mode="speech")
+                    time.sleep(5)
                 elif original_text:
                     self.io_manager.gui.update_ai_response(f"Extracted: {original_text}")
                     self.io_manager.interact_with_user("Text extracted but translation failed", mode="both")
+                    time.sleep(5)
                 else:
                     self.io_manager.interact_with_user("No text found in image", mode="both")
             else:
@@ -1100,6 +1108,7 @@ class ARGlassesAssistant:
     def _reset_conversation(self):
         """Reset conversation state and prepare for next interaction"""
         try:
+            time.sleep(1)
             # Tell the user we're ready for the next command
             self.io_manager.interact_with_user("Say 'Hi David' when you're ready for the next command.", mode="both")
 
